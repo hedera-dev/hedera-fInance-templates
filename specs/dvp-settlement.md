@@ -42,7 +42,10 @@ After setup completes, the page shows:
   Each holds a plain number in whole token units: digits, an optional decimal
   point, no separators, no symbol.
 
-Every token id and account id links to its page on HashScan testnet.
+Every token id and account id links to its page on HashScan testnet. Next to
+the balances, `#starting-position` states in words what setup gave each party
+(e.g. "Seller starts with 200 security"), so a learner never mistakes what is
+left after a trade for newly created tokens.
 
 **A trade ticket.** After setup:
 
@@ -59,6 +62,9 @@ Every token id and account id links to its page on HashScan testnet.
 - `#trade-status` — exactly one of `PENDING`, `SETTLED`, `REJECTED`
 - `#settlement-result` — after the buyer signs, the network's result code for
   the settlement, e.g. `SUCCESS` or `ACCOUNT_KYC_NOT_GRANTED_FOR_TOKEN`
+- `#trade-changes` — after the buyer signs, what the trade changed for each of
+  the two parties, as signed amounts per token (e.g. `Seller −100 security,
+  +10000 stablecoin`). For a rejected trade it says that nothing moved.
 
 **Signing with HashPack.** A signing-mode switch `#signing-mode` offers
 `Demo accounts` (the default) and `HashPack`. In HashPack mode the page shows:
@@ -72,10 +78,15 @@ Every token id and account id links to its page on HashScan testnet.
 - `#wallet-state` — a sentence saying what the learner has to do next: connect,
   onboard, propose, or sign
 
+**One wallet, not two.** The scaffold's RainbowKit connect button and its
+burner wallet are removed from the header and from the app's providers: this app
+has no EVM signing, and a second "Connect Wallet" next to `Connect HashPack`
+suggests the demo parties are browser wallets. The header keeps its navigation.
+
 ## Behaviour
 
 **The market starts in a known state.** Right after setup: the Seller holds
-`200` security and `0` stablecoin; the Buyer holds `0` security and `10000`
+`200` security and `0` stablecoin; the Buyer holds `0` security and `20000`
 stablecoin; the unverified Buyer holds `0` security and `10000` stablecoin. The
 security token has a KYC key and a freeze key. The Seller and the Buyer are
 granted KYC on the security; the unverified Buyer is associated with both tokens
@@ -89,7 +100,7 @@ exactly what it was before.
 **Both legs settle together.** With the Buyer selected, `#buyer-sign` makes the
 schedule execute. `#trade-status` becomes `SETTLED`, `#settlement-result` is
 `SUCCESS`, and with the default ticket the Seller ends with `100` security and
-`10000` stablecoin while the Buyer ends with `100` security and `0` stablecoin.
+`10000` stablecoin while the Buyer ends with `100` security and `10000` stablecoin.
 On the mirror node, the settlement is a single transaction whose token
 transfers include both the security leg and the stablecoin leg.
 
@@ -99,8 +110,14 @@ signatures `#trade-status` is `REJECTED`, `#settlement-result` is
 unverified Buyer still holds all of its stablecoin even though only the
 security leg failed the KYC check.
 
-**The desk can trade again.** After a settled or rejected trade, a new trade can
-be proposed without setting up a new market. Setting up a new market creates
+**The desk can trade again — including the same trade.** After a settled or
+rejected trade, a new trade can be proposed without setting up a new market,
+and proposing a trade **identical** to an earlier one (same buyer, quantity and
+price) creates a new schedule with a new `#schedule-id` that settles normally.
+Hedera refuses a schedule whose body matches an existing one
+(`IDENTICAL_SCHEDULE_ALREADY_CREATED`), and executed schedules stay on the
+network until they expire, so every schedule must be made unique — for example
+a per-trade reference in its memo. Setting up a new market creates
 new tokens and accounts and resets the page to them.
 
 **HashPack takes one side of the trade.** In HashPack mode the connected
@@ -108,7 +125,7 @@ account replaces the demo party of the chosen role:
 
 - *Onboarding* has the wallet sign a token association for both tokens; the
   server then grants the wallet KYC on the security and funds it like the demo
-  party it replaces — `200` security as Seller, `10000` stablecoin as Buyer.
+  party it replaces — `200` security as Seller, `20000` stablecoin as Buyer.
   Its balances appear on the page alongside the others.
 - *As Seller*, `#propose-trade` builds the same two-leg scheduled transfer
   against the selected demo Buyer and asks HashPack to sign and submit the
@@ -149,20 +166,26 @@ twice.
    `#schedule-id` and `#trade-status`; confirm on the mirror node that the
    schedule exists and has not executed, and that balances are unchanged.
 4. Press `#buyer-sign`. Confirm `SETTLED` and `SUCCESS`, the new balances on the
-   page and on the mirror node, and that the schedule's executed transaction
-   carries both legs.
+   page and on the mirror node, that the schedule's executed transaction
+   carries both legs, and that `#trade-changes` shows the Seller −100 security
+   / +10000 stablecoin and the Buyer +100 security / −10000 stablecoin.
 5. Select the unverified Buyer, propose a trade for `10` security at `1000`
    stablecoin, and sign as Buyer. Confirm `REJECTED`,
    `ACCOUNT_KYC_NOT_GRANTED_FOR_TOKEN`, and that no balance changed — on the
    page and on the mirror node.
-6. Inspect the responses the page received during all of the above for any
+6. With the Buyer selected again, propose the **identical** first trade again — Buyer, `100` security, `10000`
+   stablecoin. Confirm a new `#schedule-id`, different from the first, with
+   `#trade-status` `PENDING` and no error. Sign as Buyer and confirm it settles:
+   the Seller ends with `0` security and `20000` stablecoin, the Buyer with `200`
+   security and `0` stablecoin.
+7. Inspect the responses the page received during all of the above for any
    private key.
-7. Switch `#signing-mode` to `HashPack` without connecting a wallet. Confirm
+8. Switch `#signing-mode` to `HashPack` without connecting a wallet. Confirm
    `#connect-hashpack`, `#wallet-role` and `#wallet-state` are present, that the
    trade and onboarding controls are disabled, and that `#wallet-state` says to
    connect. If no WalletConnect project id is configured, confirm
    `#wallet-config-error` names `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`. Switch
-   back and confirm a demo trade still settles.
+   back to `Demo accounts` and confirm the demo trade controls are usable again.
 
 Completing a HashPack connection or a HashPack signature is **not** checked:
 the checker has no HashPack wallet. It is still part of the feature and must be
@@ -188,6 +211,19 @@ implemented as described.
   transactions are built with `@hiero-ledger/sdk` and sent to HashPack with
   `hedera_signAndExecuteTransaction`. Add the variable, empty, to
   `packages/nextjs/.env.example`.
+- HashPack wiring, exactly as `@hashgraph/hedera-wallet-connect` expects —
+  each point here is a bug a previous build shipped:
+  - create the provider with `HederaProvider.init({ projectId, metadata })` and
+    pass that instance to `createAppKit` as `universalProvider`, alongside a
+    `HederaAdapter` for the Hedera native namespace;
+  - sign by calling `hedera_signAndExecuteTransaction` **on that
+    `HederaProvider` instance** — not on the object `appKit.getProvider()`
+    returns, which has no `hedera_*` methods;
+  - its parameter is `{ signerAccountId: "hedera:testnet:<accountId>",
+    transactionList: <base64 string> }` — `transactionList` is one base64
+    string, not an array named `transaction`;
+  - use the library's exported types; do not cast the provider to a
+    hand-written type, which hides exactly these mistakes from the compiler.
 - MetaMask and EVM wallets are not used for signing: scheduled transactions are
   native Hedera transactions.
 
