@@ -161,7 +161,7 @@ const Home: NextPage = () => {
 
       <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full">
         <h2 className="font-bold text-lg mb-4">Signing</h2>
-        <label className="label" htmlFor="signing-mode">
+        <label className="block text-sm text-base-content/70 mb-1" htmlFor="signing-mode">
           Sign with
         </label>
         <select
@@ -198,8 +198,8 @@ const Home: NextPage = () => {
               </p>
             )}
 
-            <div>
-              <label className="label" htmlFor="wallet-role">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm text-base-content/70" htmlFor="wallet-role">
                 Wallet acts as
               </label>
               <select
@@ -233,7 +233,10 @@ const Home: NextPage = () => {
 
       {market && (
         <>
-          <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full overflow-x-auto">
+          <section
+            id="market"
+            className="card bg-base-100 shadow-md border border-base-300 p-6 w-full overflow-x-auto scroll-mt-24"
+          >
             <h2 className="font-bold text-lg mb-4">Market</h2>
             <div className="flex flex-wrap gap-6 mb-4 text-sm">
               <span>
@@ -317,8 +320,8 @@ const Home: NextPage = () => {
           <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full">
             <h2 className="font-bold text-lg mb-4">Trade ticket</h2>
             <div className="flex flex-wrap gap-4 items-end mb-4">
-              <div>
-                <label className="label" htmlFor="trade-quantity">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-base-content/70" htmlFor="trade-quantity">
                   Quantity (security)
                 </label>
                 <input
@@ -330,8 +333,8 @@ const Home: NextPage = () => {
                   onChange={e => setQuantity(Number(e.target.value))}
                 />
               </div>
-              <div>
-                <label className="label" htmlFor="trade-price">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-base-content/70" htmlFor="trade-price">
                   Price (stablecoin)
                 </label>
                 <input
@@ -343,8 +346,8 @@ const Home: NextPage = () => {
                   onChange={e => setPrice(Number(e.target.value))}
                 />
               </div>
-              <div>
-                <label className="label" htmlFor="trade-buyer">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-base-content/70" htmlFor="trade-buyer">
                   Buyer
                 </label>
                 <select
