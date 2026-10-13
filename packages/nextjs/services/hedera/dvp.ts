@@ -10,6 +10,7 @@ import {
   TokenAssociateTransaction,
   TokenCreateTransaction,
   TokenGrantKycTransaction,
+  TokenMintTransaction,
   TransactionId,
   TransactionReceiptQuery,
   TransferTransaction,
@@ -428,10 +429,23 @@ export async function completeWalletBuyerSign(): Promise<MarketSnapshot> {
 }
 
 /** Builds the unsigned, wallet-payer token association for onboarding a connected wallet. */
+/**
+ * The operator is the issuer and the treasury of both tokens, so it cannot also take a side of
+ * the trade: funding it would be a transfer to itself that moves nothing.
+ */
+function assertNotOperator(client: Client, accountId: string): void {
+  if (client.operatorAccountId?.toString() === accountId) {
+    throw new Error(
+      `${accountId} is the operator account that issues both tokens. Connect a different HashPack account to trade.`,
+    );
+  }
+}
+
 export async function prepareOnboardWallet(accountId: string): Promise<string> {
   const market = requireMarket();
   const client = getOperatorClient();
   try {
+    assertNotOperator(client, accountId);
     const tx = new TokenAssociateTransaction()
       .setAccountId(accountId)
       .setTokenIds([market.securityTokenId, market.paymentTokenId])
@@ -448,6 +462,7 @@ export async function completeOnboardWallet(role: WalletRole, accountId: string)
   const market = requireMarket();
   const client = getOperatorClient();
   try {
+    assertNotOperator(client, accountId);
     await grantSecurityKyc(client, market.securityTokenId, accountId);
 
     const operatorId = client.operatorAccountId;
@@ -455,6 +470,10 @@ export async function completeOnboardWallet(role: WalletRole, accountId: string)
 
     if (role === "seller") {
       const amount = toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS);
+      // Setup hands the whole initial supply to the demo parties; mint the wallet's share.
+      await (
+        await new TokenMintTransaction().setTokenId(market.securityTokenId).setAmount(amount).execute(client)
+      ).getReceipt(client);
       const response = await new TransferTransaction()
         .addTokenTransfer(market.securityTokenId, operatorId.toString(), -amount)
         .addTokenTransfer(market.securityTokenId, accountId, amount)
@@ -464,6 +483,10 @@ export async function completeOnboardWallet(role: WalletRole, accountId: string)
       market.walletSeller = { accountId };
     } else {
       const amount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
+      // Setup hands the whole initial supply to the demo parties; mint the wallet's share.
+      await (
+        await new TokenMintTransaction().setTokenId(market.paymentTokenId).setAmount(amount).execute(client)
+      ).getReceipt(client);
       const response = await new TransferTransaction()
         .addTokenTransfer(market.paymentTokenId, operatorId.toString(), -amount)
         .addTokenTransfer(market.paymentTokenId, accountId, amount)
