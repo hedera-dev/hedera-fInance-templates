@@ -18,6 +18,7 @@ import {
 import { getOperatorClient } from "~~/services/hedera/client";
 import { formatBaseUnits, toBaseUnits } from "~~/services/hedera/format";
 import { fetchPartyBalances, waitForMirrorIndexing } from "~~/services/hedera/mirror";
+import type { SetupStepId } from "~~/services/hedera/setupSteps";
 import {
   BuyerChoice,
   DemoParty,
@@ -165,39 +166,67 @@ async function grantSecurityKyc(client: Client, securityTokenId: string, account
 }
 
 /** Creates fresh demo accounts and tokens, and resets the page to them. */
-export async function setupMarket(): Promise<MarketSnapshot> {
+/**
+ * Runs each setup step in order, reporting it to `onStep` as it starts and finishes so the page
+ * can show progress. `detail` carries the ids a step created.
+ */
+export async function setupMarket(
+  onStep: (step: SetupStepId, status: "active" | "done", detail?: string) => void = () => undefined,
+): Promise<MarketSnapshot> {
   const client = getOperatorClient();
+  const step = async <T>(id: SetupStepId, run: () => Promise<T>, detail?: (result: T) => string): Promise<T> => {
+    onStep(id, "active");
+    const result = await run();
+    onStep(id, "done", detail?.(result));
+    return result;
+  };
   try {
     const operatorId = client.operatorAccountId;
     if (!operatorId) throw new Error("Operator account id is not available on the client");
 
     // One transaction at a time: submitting several from the same payer in the same instant
     // can draw a transient BUSY response from a testnet node, even though each is independent.
-    const seller = await createDemoAccount(client);
-    const buyer = await createDemoAccount(client);
-    const unverifiedBuyer = await createDemoAccount(client);
+    const [seller, buyer, unverifiedBuyer] = await step(
+      "accounts",
+      async () => [await createDemoAccount(client), await createDemoAccount(client), await createDemoAccount(client)],
+      accounts => accounts.map(a => a.accountId).join(", "),
+    );
 
-    const securityTokenId = await createSecurityToken(client, operatorId.toString());
-    const paymentTokenId = await createPaymentToken(client, operatorId.toString());
+    const securityTokenId = await step(
+      "security",
+      () => createSecurityToken(client, operatorId.toString()),
+      id => id,
+    );
+    const paymentTokenId = await step(
+      "stablecoin",
+      () => createPaymentToken(client, operatorId.toString()),
+      id => id,
+    );
 
-    await associateBoth(client, seller, securityTokenId, paymentTokenId);
-    await associateBoth(client, buyer, securityTokenId, paymentTokenId);
-    await associateBoth(client, unverifiedBuyer, securityTokenId, paymentTokenId);
+    await step("associate", async () => {
+      for (const party of [seller, buyer, unverifiedBuyer]) {
+        await associateBoth(client, party, securityTokenId, paymentTokenId);
+      }
+    });
 
-    await grantSecurityKyc(client, securityTokenId, seller.accountId);
-    await grantSecurityKyc(client, securityTokenId, buyer.accountId);
+    await step("kyc", async () => {
+      await grantSecurityKyc(client, securityTokenId, seller.accountId);
+      await grantSecurityKyc(client, securityTokenId, buyer.accountId);
+    });
 
-    const securityAmount = toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS);
-    const paymentAmount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
-    const fundingResponse = await new TransferTransaction()
-      .addTokenTransfer(securityTokenId, operatorId.toString(), -securityAmount)
-      .addTokenTransfer(securityTokenId, seller.accountId, securityAmount)
-      .addTokenTransfer(paymentTokenId, operatorId.toString(), -(paymentAmount * 2n))
-      .addTokenTransfer(paymentTokenId, buyer.accountId, paymentAmount)
-      .addTokenTransfer(paymentTokenId, unverifiedBuyer.accountId, paymentAmount)
-      .execute(client);
-    await fundingResponse.getReceipt(client);
-    await waitForMirrorIndexing(fundingResponse.transactionId.toString());
+    await step("fund", async () => {
+      const securityAmount = toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS);
+      const paymentAmount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
+      const fundingResponse = await new TransferTransaction()
+        .addTokenTransfer(securityTokenId, operatorId.toString(), -securityAmount)
+        .addTokenTransfer(securityTokenId, seller.accountId, securityAmount)
+        .addTokenTransfer(paymentTokenId, operatorId.toString(), -(paymentAmount * 2n))
+        .addTokenTransfer(paymentTokenId, buyer.accountId, paymentAmount)
+        .addTokenTransfer(paymentTokenId, unverifiedBuyer.accountId, paymentAmount)
+        .execute(client);
+      await fundingResponse.getReceipt(client);
+      await waitForMirrorIndexing(fundingResponse.transactionId.toString());
+    });
 
     const market: Market = {
       securityTokenId,
@@ -208,6 +237,7 @@ export async function setupMarket(): Promise<MarketSnapshot> {
       walletSeller: null,
       walletBuyer: null,
       trade: null,
+      pendingWalletProposal: null,
     };
     setMarket(market);
 
@@ -241,6 +271,17 @@ function buildTransferTransaction(
     .setTransactionMemo("DvP settlement");
 }
 
+/**
+ * The security has 0 decimals and the stablecoin 6, so a fractional quantity or a price below
+ * one micro-unit would be silently rounded by `toBaseUnits` into a different trade than shown.
+ */
+function assertValidTerms(quantity: number, price: number): void {
+  if (!Number.isInteger(quantity) || quantity < 1) throw new Error("Quantity must be a whole number of at least 1.");
+  if (!(price > 0) || Math.round(price * 10 ** PAYMENT_DECIMALS) !== price * 10 ** PAYMENT_DECIMALS) {
+    throw new Error(`Price must be positive, with at most ${PAYMENT_DECIMALS} decimals.`);
+  }
+}
+
 function assertNoPendingTrade(market: Market): void {
   if (market.trade && market.trade.status === "PENDING") {
     throw new Error("A trade is already pending a signature.");
@@ -256,6 +297,7 @@ export async function proposeTradeDemo(
   const market = requireMarket();
   if (market.walletSeller) throw new Error("Seller is a connected wallet; use the wallet signing flow.");
   assertNoPendingTrade(market);
+  assertValidTerms(quantity, price);
 
   const client = getOperatorClient();
   try {
@@ -340,10 +382,12 @@ export async function prepareWalletSellerPropose(
   const market = requireMarket();
   if (!market.walletSeller) throw new Error("No wallet is onboarded as Seller.");
   assertNoPendingTrade(market);
+  assertValidTerms(quantity, price);
 
   const client = getOperatorClient();
   try {
     const sellerAccountId = market.walletSeller.accountId;
+    market.pendingWalletProposal = { quantity, price, buyerChoice };
     const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
 
     const scheduleTx = buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
@@ -359,14 +403,16 @@ export async function prepareWalletSellerPropose(
 }
 
 /** Records the schedule a HashPack seller just created and submitted. */
-export async function completeWalletSellerPropose(
-  transactionId: string,
-  quantity: number,
-  price: number,
-  buyerChoice: BuyerChoice,
-): Promise<MarketSnapshot> {
+export async function completeWalletSellerPropose(transactionId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
   if (!market.walletSeller) throw new Error("No wallet is onboarded as Seller.");
+  assertNoPendingTrade(market);
+  const terms = market.pendingWalletProposal;
+  if (!terms) throw new Error("No proposal was prepared for the wallet Seller.");
+  if (!transactionId.startsWith(`${market.walletSeller.accountId}@`)) {
+    throw new Error("That transaction was not submitted by the onboarded Seller wallet.");
+  }
+  const { quantity, price, buyerChoice } = terms;
 
   const client = getOperatorClient();
   try {
@@ -386,6 +432,7 @@ export async function completeWalletSellerPropose(
       status: "PENDING",
       settlementResult: null,
     };
+    market.pendingWalletProposal = null;
 
     return await buildSnapshot(market);
   } finally {
@@ -400,6 +447,7 @@ export async function prepareWalletBuyerSign(): Promise<string> {
   if (!trade) throw new Error("No trade has been proposed yet.");
   if (!market.walletBuyer) throw new Error("No wallet is onboarded as Buyer.");
   if (trade.status !== "PENDING") throw new Error("Trade is not pending a signature.");
+  if (!trade.buyerIsWallet) throw new Error("This trade's buyer is a demo account, not your wallet.");
 
   const client = getOperatorClient();
   try {
@@ -414,13 +462,16 @@ export async function prepareWalletBuyerSign(): Promise<string> {
 }
 
 /** Reads back the settlement result after a HashPack buyer signed the schedule. */
-export async function completeWalletBuyerSign(): Promise<MarketSnapshot> {
+export async function completeWalletBuyerSign(transactionId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
   const trade = market.trade;
   if (!trade) throw new Error("No trade has been proposed yet.");
+  if (trade.status !== "PENDING" || !trade.buyerIsWallet) throw new Error("No trade is waiting for your signature.");
 
   const client = getOperatorClient();
   try {
+    // Throws with the network's status if HashPack's ScheduleSign itself failed.
+    await new TransactionReceiptQuery().setTransactionId(transactionId).execute(client);
     await finalizeTrade(trade, client);
     return await buildSnapshot(market);
   } finally {
@@ -441,11 +492,33 @@ function assertNotOperator(client: Client, accountId: string): void {
   }
 }
 
-export async function prepareOnboardWallet(accountId: string): Promise<string> {
+/**
+ * Who may onboard: not the operator, not a demo party (that would, for example, hand KYC to the
+ * unverified Buyer), not twice in the same role, and not while a trade is pending.
+ * Returns whether the account already joined in the other role, so its association is done.
+ */
+function checkOnboarding(market: Market, client: Client, role: WalletRole, accountId: string): boolean {
+  if (role !== "seller" && role !== "buyer") throw new Error('role must be "seller" or "buyer"');
+  assertNotOperator(client, accountId);
+  if ([market.seller, market.buyer, market.unverifiedBuyer].some(p => p.accountId === accountId)) {
+    throw new Error(`${accountId} is one of the demo accounts. Connect your own HashPack account.`);
+  }
+  assertNoPendingTrade(market);
+  const current = role === "seller" ? market.walletSeller : market.walletBuyer;
+  if (current?.accountId === accountId) throw new Error(`${accountId} is already onboarded as ${role}.`);
+  const other = role === "seller" ? market.walletBuyer : market.walletSeller;
+  return other?.accountId === accountId;
+}
+
+/**
+ * The unsigned token association for HashPack to sign, or null when the wallet already
+ * associated both tokens while onboarding for the other role.
+ */
+export async function prepareOnboardWallet(role: WalletRole, accountId: string): Promise<string | null> {
   const market = requireMarket();
   const client = getOperatorClient();
   try {
-    assertNotOperator(client, accountId);
+    if (checkOnboarding(market, client, role, accountId)) return null;
     const tx = new TokenAssociateTransaction()
       .setAccountId(accountId)
       .setTokenIds([market.securityTokenId, market.paymentTokenId])
@@ -457,45 +530,32 @@ export async function prepareOnboardWallet(accountId: string): Promise<string> {
   }
 }
 
-/** Grants KYC and funds a wallet that just associated with both tokens, then adopts it for `role`. */
+/** Grants KYC and funds a wallet that associated both tokens, then adopts it for `role`. */
 export async function completeOnboardWallet(role: WalletRole, accountId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
   const client = getOperatorClient();
   try {
-    assertNotOperator(client, accountId);
-    await grantSecurityKyc(client, market.securityTokenId, accountId);
+    const joinedInOtherRole = checkOnboarding(market, client, role, accountId);
+    if (!joinedInOtherRole) await grantSecurityKyc(client, market.securityTokenId, accountId);
 
     const operatorId = client.operatorAccountId;
     if (!operatorId) throw new Error("Operator account id is not available on the client");
 
-    if (role === "seller") {
-      const amount = toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS);
-      // Setup hands the whole initial supply to the demo parties; mint the wallet's share.
-      await (
-        await new TokenMintTransaction().setTokenId(market.securityTokenId).setAmount(amount).execute(client)
-      ).getReceipt(client);
-      const response = await new TransferTransaction()
-        .addTokenTransfer(market.securityTokenId, operatorId.toString(), -amount)
-        .addTokenTransfer(market.securityTokenId, accountId, amount)
-        .execute(client);
-      await response.getReceipt(client);
-      await waitForMirrorIndexing(response.transactionId.toString());
-      market.walletSeller = { accountId };
-    } else {
-      const amount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
-      // Setup hands the whole initial supply to the demo parties; mint the wallet's share.
-      await (
-        await new TokenMintTransaction().setTokenId(market.paymentTokenId).setAmount(amount).execute(client)
-      ).getReceipt(client);
-      const response = await new TransferTransaction()
-        .addTokenTransfer(market.paymentTokenId, operatorId.toString(), -amount)
-        .addTokenTransfer(market.paymentTokenId, accountId, amount)
-        .execute(client);
-      await response.getReceipt(client);
-      await waitForMirrorIndexing(response.transactionId.toString());
-      market.walletBuyer = { accountId };
-    }
+    const [tokenId, amount] =
+      role === "seller"
+        ? [market.securityTokenId, toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS)]
+        : [market.paymentTokenId, toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS)];
+    // Setup hands the whole initial supply to the demo parties; mint the wallet's share.
+    await (await new TokenMintTransaction().setTokenId(tokenId).setAmount(amount).execute(client)).getReceipt(client);
+    const response = await new TransferTransaction()
+      .addTokenTransfer(tokenId, operatorId.toString(), -amount)
+      .addTokenTransfer(tokenId, accountId, amount)
+      .execute(client);
+    await response.getReceipt(client);
+    await waitForMirrorIndexing(response.transactionId.toString());
 
+    if (role === "seller") market.walletSeller = { accountId };
+    else market.walletBuyer = { accountId };
     return await buildSnapshot(market);
   } finally {
     client.close();

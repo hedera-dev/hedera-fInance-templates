@@ -36,11 +36,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** "0.0.1234@1690000000.123456789" (SDK) -> "0.0.1234-1690000000-123456789" (mirror node). */
-function toMirrorTransactionId(sdkTransactionId: string): string {
-  const [payer, time] = sdkTransactionId.split("@");
+/**
+ * "0.0.1234@1690000000.123456789" (SDK) -> "0.0.1234-1690000000-123456789" (mirror node).
+ * A scheduled id carries a "?scheduled" suffix; the mirror node rejects that bare parameter
+ * with a 400 and wants "?scheduled=true" instead, which selects the executed transfer.
+ */
+function toMirrorTransactionPath(sdkTransactionId: string): string {
+  const [base, suffix] = sdkTransactionId.split("?");
+  const [payer, time] = base.split("@");
   const [seconds, nanos] = time.split(".");
-  return `${payer}-${seconds}-${nanos}`;
+  return `${payer}-${seconds}-${nanos}${suffix === "scheduled" ? "?scheduled=true" : ""}`;
 }
 
 /**
@@ -49,9 +54,9 @@ function toMirrorTransactionId(sdkTransactionId: string): string {
  * caller's balances may then lag by a beat, but will catch up on the next refresh.
  */
 export async function waitForMirrorIndexing(sdkTransactionId: string, maxAttempts = 8, delayMs = 1000): Promise<void> {
-  const mirrorId = toMirrorTransactionId(sdkTransactionId);
+  const mirrorPath = toMirrorTransactionPath(sdkTransactionId);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const res = await fetch(`${MIRROR_BASE}/api/v1/transactions/${mirrorId}`, { cache: "no-store" });
+    const res = await fetch(`${MIRROR_BASE}/api/v1/transactions/${mirrorPath}`, { cache: "no-store" });
     if (res.ok) return;
     await sleep(delayMs);
   }

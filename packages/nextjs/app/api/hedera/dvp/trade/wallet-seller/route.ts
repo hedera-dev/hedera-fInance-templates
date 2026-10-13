@@ -5,7 +5,7 @@ import type { BuyerChoice } from "~~/services/hedera/store";
 
 type Body =
   | { stage: "prepare"; quantity: number; price: number; buyerChoice: BuyerChoice }
-  | { stage: "complete"; transactionId: string; quantity: number; price: number; buyerChoice: BuyerChoice };
+  | { stage: "complete"; transactionId: string };
 
 /**
  * Seller is a connected wallet: `prepare` returns the unsigned schedule-create transaction for
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ transaction });
     }
     if (body.stage === "complete") {
-      const market = await completeWalletSellerPropose(body.transactionId, body.quantity, body.price, body.buyerChoice);
+      const market = await completeWalletSellerPropose(body.transactionId);
       return NextResponse.json({ market });
     }
     throw new Error('stage must be "prepare" or "complete"');

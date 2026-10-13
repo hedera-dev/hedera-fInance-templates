@@ -2,6 +2,7 @@
  * Client-side fetch wrappers for the DvP API routes. No Hedera SDK import here — just JSON
  * over fetch, so this module is safe to use from any client component.
  */
+import type { SetupEvent, SetupStepId } from "~~/services/hedera/setupSteps";
 import type { BuyerChoice, MarketSnapshot, WalletRole } from "~~/services/hedera/types";
 
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
@@ -28,9 +29,41 @@ export async function fetchMarket(): Promise<MarketSnapshot | null> {
   return data.market ?? null;
 }
 
-export async function setupMarket(): Promise<MarketSnapshot> {
-  const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/market", {});
-  return market;
+/** Thrown when setup fails; `step` is the step that was running, for the progress list. */
+export class SetupError extends Error {
+  constructor(
+    message: string,
+    readonly step: SetupStepId | null,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Runs setup, calling `onStep` for every progress line the server streams, and resolves with the
+ * new market once the last step is done.
+ */
+export async function setupMarket(
+  onStep: (event: Extract<SetupEvent, { type: "step" }>) => void,
+): Promise<MarketSnapshot> {
+  const res = await fetch("/api/hedera/dvp/market", { method: "POST" });
+  if (!res.ok || !res.body) throw new SetupError(`Setup request failed (${res.status})`, null);
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffered = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value) buffered += value;
+    const lines = buffered.split("\n");
+    buffered = done ? "" : (lines.pop() ?? "");
+    for (const line of lines.filter(Boolean)) {
+      const event = JSON.parse(line) as SetupEvent;
+      if (event.type === "step") onStep(event);
+      else if (event.type === "done") return event.market;
+      else throw new SetupError(event.error, event.step);
+    }
+    if (done) throw new SetupError("Setup ended without a result", null);
+  }
 }
 
 export async function proposeTrade(quantity: number, price: number, buyerChoice: BuyerChoice): Promise<MarketSnapshot> {
@@ -61,18 +94,11 @@ export async function prepareWalletSellerPropose(
   return transaction;
 }
 
-export async function completeWalletSellerPropose(
-  transactionId: string,
-  quantity: number,
-  price: number,
-  buyerChoice: BuyerChoice,
-): Promise<MarketSnapshot> {
+/** The server records the terms it prepared, not anything sent here. */
+export async function completeWalletSellerPropose(transactionId: string): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/wallet-seller", {
     stage: "complete",
     transactionId,
-    quantity,
-    price,
-    buyerChoice,
   });
   return market;
 }
@@ -84,16 +110,19 @@ export async function prepareWalletBuyerSign(): Promise<string> {
   return transaction;
 }
 
-export async function completeWalletBuyerSign(): Promise<MarketSnapshot> {
+export async function completeWalletBuyerSign(transactionId: string): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/wallet-buyer", {
     stage: "complete",
+    transactionId,
   });
   return market;
 }
 
-export async function prepareOnboardWallet(accountId: string): Promise<string> {
-  const { transaction } = await postJson<{ transaction: string }>("/api/hedera/dvp/wallet/onboard", {
+/** Null when the wallet already associated both tokens while onboarding for the other role. */
+export async function prepareOnboardWallet(role: WalletRole, accountId: string): Promise<string | null> {
+  const { transaction } = await postJson<{ transaction: string | null }>("/api/hedera/dvp/wallet/onboard", {
     stage: "prepare",
+    role,
     accountId,
   });
   return transaction;

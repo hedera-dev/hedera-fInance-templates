@@ -26,11 +26,13 @@ export function useHederaWallet(projectId: string) {
     if (!isConfigured) return;
     let unsubscribe: (() => void) | undefined;
     let cancelled = false;
-    void getHederaWallet(projectId)?.then(({ kit }) => {
-      if (cancelled) return;
-      setAccount(getConnectedAccount(kit));
-      unsubscribe = subscribeToAccount(kit, setAccount);
-    });
+    void getHederaWallet(projectId)
+      ?.then(({ kit }) => {
+        if (cancelled) return;
+        setAccount(getConnectedAccount(kit));
+        unsubscribe = subscribeToAccount(kit, setAccount);
+      })
+      .catch(e => console.error("HashPack connection could not start", e));
     return () => {
       cancelled = true;
       unsubscribe?.();

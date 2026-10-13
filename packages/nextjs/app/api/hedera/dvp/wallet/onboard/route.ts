@@ -3,7 +3,7 @@ import { errorResponse } from "~~/services/hedera/apiError";
 import { completeOnboardWallet, prepareOnboardWallet } from "~~/services/hedera/dvp";
 import type { WalletRole } from "~~/services/hedera/store";
 
-type Body = { stage: "prepare"; accountId: string } | { stage: "complete"; accountId: string; role: WalletRole };
+type Body = { stage: "prepare" | "complete"; accountId: string; role: WalletRole };
 
 /**
  * Onboards a connected wallet into the market: `prepare` returns the unsigned token
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
     if (body.stage === "prepare") {
-      const transaction = await prepareOnboardWallet(body.accountId);
+      const transaction = await prepareOnboardWallet(body.role, body.accountId);
       return NextResponse.json({ transaction });
     }
     if (body.stage === "complete") {

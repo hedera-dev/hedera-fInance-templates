@@ -58,6 +58,10 @@ export function getHederaWallet(projectId: string | undefined | null): Promise<H
     });
     return { kit, provider };
   })();
+  // A failed start (relay down, bad project id) must not stick: the next call retries.
+  wallet.catch(() => {
+    wallet = null;
+  });
   return wallet;
 }
 

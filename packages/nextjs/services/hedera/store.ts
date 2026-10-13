@@ -40,10 +40,11 @@ export type Market = {
   walletSeller: WalletParty | null;
   walletBuyer: WalletParty | null;
   trade: Trade | null;
+  /** Terms the server prepared for a HashPack seller to sign; `complete` records these, never the client's. */
+  pendingWalletProposal: { quantity: number; price: number; buyerChoice: BuyerChoice } | null;
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var __dvpMarket: Market | undefined;
 }
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NextPage } from "next";
 import { HashScanLink } from "~~/app/_components/dvp/HashScanLink";
+import { SetupPanel } from "~~/app/_components/dvp/SetupPanel";
 import { useHederaWallet } from "~~/hooks/scaffold-hbar/useHederaWallet";
 import * as dvp from "~~/services/hedera/dvpClient";
 import type { BuyerChoice, MarketSnapshot, WalletRole } from "~~/services/hedera/types";
@@ -10,7 +11,6 @@ import { notification } from "~~/utils/scaffold-hbar/notification";
 
 type SigningMode = "demo" | "hashpack";
 
-const OPERATOR_ENV_VARS = "HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY";
 const WALLET_CONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? "";
 
 function errorMessage(e: unknown): string {
@@ -29,7 +29,6 @@ const Home: NextPage = () => {
   const [price, setPrice] = useState(10000);
   const [buyerChoice, setBuyerChoice] = useState<BuyerChoice>("buyer");
 
-  const [busySetup, setBusySetup] = useState(false);
   const [busyPropose, setBusyPropose] = useState(false);
   const [busySign, setBusySign] = useState(false);
   const [busyOnboard, setBusyOnboard] = useState(false);
@@ -49,27 +48,12 @@ const Home: NextPage = () => {
       .catch(() => undefined);
   }, []);
 
-  const handleSetup = useCallback(async () => {
-    setBusySetup(true);
-    try {
-      setMarket(await dvp.setupMarket());
-      notification.success("Market set up.");
-    } catch (e) {
-      notification.error(errorMessage(e));
-    } finally {
-      setBusySetup(false);
-    }
-  }, []);
-
   const handlePropose = useCallback(async () => {
     setBusyPropose(true);
     try {
       const next = market?.walletSeller
         ? await dvp.completeWalletSellerPropose(
             await wallet.signAndExecute(await dvp.prepareWalletSellerPropose(quantity, price, buyerChoice)),
-            quantity,
-            price,
-            buyerChoice,
           )
         : await dvp.proposeTrade(quantity, price, buyerChoice);
       setMarket(next);
@@ -86,8 +70,7 @@ const Home: NextPage = () => {
     try {
       const next = trade?.buyerIsWallet
         ? await (async () => {
-            await wallet.signAndExecute(await dvp.prepareWalletBuyerSign());
-            return dvp.completeWalletBuyerSign();
+            return dvp.completeWalletBuyerSign(await wallet.signAndExecute(await dvp.prepareWalletBuyerSign()));
           })()
         : await dvp.signTrade();
       setMarket(next);
@@ -105,7 +88,9 @@ const Home: NextPage = () => {
   const handleOnboard = useCallback(async () => {
     setBusyOnboard(true);
     try {
-      await wallet.signAndExecute(await dvp.prepareOnboardWallet(wallet.accountId));
+      // No transaction when the wallet already associated both tokens in its other role.
+      const association = await dvp.prepareOnboardWallet(walletRole, wallet.accountId);
+      if (association) await wallet.signAndExecute(association);
       setMarket(await dvp.completeOnboardWallet(walletRole, wallet.accountId));
       notification.success("Wallet onboarded.");
     } catch (e) {
@@ -133,33 +118,34 @@ const Home: NextPage = () => {
       : market?.walletBuyer?.accountId === wallet.accountId;
 
   const walletBlocksAction = signingMode === "hashpack" && !wallet.isConnected;
+  // Wallet transactions are built with the onboarded account as payer, so HashPack must be on that account.
+  const sellerWalletMismatch = market?.walletSeller != null && wallet.accountId !== market.walletSeller.accountId;
+  const buyerWalletMismatch = trade?.buyerIsWallet === true && wallet.accountId !== market?.walletBuyer?.accountId;
   const proposeDisabled =
-    busyPropose ||
-    !market ||
-    trade?.status === "PENDING" ||
-    (market?.walletSeller != null && !wallet.isConnected) ||
-    walletBlocksAction;
+    busyPropose || !market || trade?.status === "PENDING" || sellerWalletMismatch || walletBlocksAction;
   const buyerSignDisabled =
-    busySign ||
-    !trade ||
-    trade.status !== "PENDING" ||
-    (trade.buyerIsWallet && !wallet.isConnected) ||
-    walletBlocksAction;
+    busySign || !trade || trade.status !== "PENDING" || buyerWalletMismatch || walletBlocksAction;
   const onboardDisabled = busyOnboard || !wallet.isConfigured || !wallet.isConnected || !market || onboardedForRole;
 
   const walletState = useMemo(() => {
     if (!wallet.isConfigured) return "Connect HashPack to continue (set NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID first).";
     if (!wallet.isConnected) return "Connect HashPack to continue.";
     if (!market) return "Set up the market, then onboard your wallet.";
+    const onboarded = walletRole === "seller" ? market.walletSeller : market.walletBuyer;
+    if (onboarded && onboarded.accountId !== wallet.accountId) {
+      return `Switch HashPack to ${onboarded.accountId}, the account onboarded as ${walletRole === "seller" ? "Seller" : "Buyer"}, or onboard this one.`;
+    }
     if (!onboardedForRole)
       return `Onboard your wallet to take the ${walletRole === "seller" ? "Seller" : "Buyer"} role.`;
     if (walletRole === "seller") {
       return trade && trade.status === "PENDING" ? "Waiting for the Buyer to sign." : "Propose a trade as Seller.";
     }
     if (!trade) return "Waiting for a trade to be proposed.";
-    if (trade.status !== "PENDING") return "Trade settled. Propose another trade when ready.";
+    if (trade.status === "SETTLED") return "Trade settled. Propose another trade when ready.";
+    if (trade.status === "REJECTED")
+      return `Trade rejected (${trade.settlementResult}); nothing moved. Propose another trade when ready.`;
     return trade.buyerIsWallet ? "Sign the trade as Buyer." : "This trade's Buyer is a demo account.";
-  }, [wallet.isConfigured, wallet.isConnected, market, onboardedForRole, walletRole, trade]);
+  }, [wallet.isConfigured, wallet.isConnected, wallet.accountId, market, onboardedForRole, walletRole, trade]);
 
   return (
     <div className="flex items-center flex-col grow px-5 py-10 gap-8 max-w-4xl mx-auto w-full">
@@ -243,22 +229,7 @@ const Home: NextPage = () => {
         )}
       </section>
 
-      <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full">
-        <h2 className="font-bold text-lg mb-4">Setup</h2>
-        {configLoaded && !operatorConfigured && (
-          <p id="config-error" className="text-error text-sm mb-3">
-            Set {OPERATOR_ENV_VARS} to configure the operator.
-          </p>
-        )}
-        <button
-          id="setup-market"
-          className="btn btn-primary w-fit"
-          disabled={!configLoaded || !operatorConfigured || busySetup}
-          onClick={handleSetup}
-        >
-          {busySetup ? "Setting up…" : "Set up market"}
-        </button>
-      </section>
+      <SetupPanel configLoaded={configLoaded} operatorConfigured={operatorConfigured} onMarket={setMarket} />
 
       {market && (
         <>
