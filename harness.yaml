@@ -1,0 +1,5 @@
+# Root scripts delegate to @sh/nextjs; the template has no contracts package and no test script.
+install: yarn install
+build: yarn next:build
+# next:dev runs `next dev` and keeps running; it inherits HEDERA_OPERATOR_ID/KEY from the harness.
+serve: yarn next:dev
