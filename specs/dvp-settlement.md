@@ -15,8 +15,10 @@ Three parties appear on the page:
 - **Buyer** — holds the stablecoin, signs second. There are two buyers: one
   KYC-approved on the security, and one that is not.
 
-The Seller and both Buyers are demo accounts the app creates and signs for on
-the server, so the whole flow runs from one browser tab with no wallet.
+By default the Seller and both Buyers are demo accounts the app creates and
+signs for on the server, so the whole flow runs from one browser tab with no
+wallet. A learner can also connect **HashPack** and take the Seller's or the
+Buyer's place with their own testnet account, against a demo counterparty.
 
 ## What a user sees
 
@@ -58,6 +60,18 @@ Every token id and account id links to its page on HashScan testnet.
 - `#settlement-result` — after the buyer signs, the network's result code for
   the settlement, e.g. `SUCCESS` or `ACCOUNT_KYC_NOT_GRANTED_FOR_TOKEN`
 
+**Signing with HashPack.** A signing-mode switch `#signing-mode` offers
+`Demo accounts` (the default) and `HashPack`. In HashPack mode the page shows:
+
+- `#connect-hashpack` — labelled `Connect HashPack`; once connected it offers
+  disconnecting instead
+- `#wallet-account-id` — the connected account id, linked to HashScan
+- `#wallet-role` — choice between `Seller` and `Buyer`
+- `#onboard-wallet` — labelled `Onboard wallet`, which prepares the connected
+  account for its role in the current market
+- `#wallet-state` — a sentence saying what the learner has to do next: connect,
+  onboard, propose, or sign
+
 ## Behaviour
 
 **The market starts in a known state.** Right after setup: the Seller holds
@@ -89,6 +103,30 @@ security leg failed the KYC check.
 be proposed without setting up a new market. Setting up a new market creates
 new tokens and accounts and resets the page to them.
 
+**HashPack takes one side of the trade.** In HashPack mode the connected
+account replaces the demo party of the chosen role:
+
+- *Onboarding* has the wallet sign a token association for both tokens; the
+  server then grants the wallet KYC on the security and funds it like the demo
+  party it replaces — `200` security as Seller, `10000` stablecoin as Buyer.
+  Its balances appear on the page alongside the others.
+- *As Seller*, `#propose-trade` builds the same two-leg scheduled transfer
+  against the selected demo Buyer and asks HashPack to sign and submit the
+  schedule creation. `#buyer-sign` then signs as the demo Buyer on the server.
+- *As Buyer*, `#propose-trade` has the demo Seller create and sign the schedule
+  on the server, and `#buyer-sign` asks HashPack to sign it.
+
+Settlement, status, result codes and balances behave exactly as with demo
+accounts. Wallet signatures go through WalletConnect to HashPack — the app never
+holds the wallet's key.
+
+**HashPack mode is safe before a wallet is connected.** With no wallet
+connected, `#onboard-wallet`, `#propose-trade` and `#buyer-sign` are disabled
+and `#wallet-state` says to connect HashPack. When the WalletConnect project id
+is not configured, `#wallet-config-error` names the variable to set,
+`NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`, and the demo-account flow keeps
+working unaffected. Switching back to `Demo accounts` restores the demo flow.
+
 **Balances are read from the network.** Displayed balances agree with the mirror
 node for the same accounts once the mirror node has caught up, and refresh after
 each step without a page reload.
@@ -119,6 +157,16 @@ twice.
    page and on the mirror node.
 6. Inspect the responses the page received during all of the above for any
    private key.
+7. Switch `#signing-mode` to `HashPack` without connecting a wallet. Confirm
+   `#connect-hashpack`, `#wallet-role` and `#wallet-state` are present, that the
+   trade and onboarding controls are disabled, and that `#wallet-state` says to
+   connect. If no WalletConnect project id is configured, confirm
+   `#wallet-config-error` names `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`. Switch
+   back and confirm a demo trade still settles.
+
+Completing a HashPack connection or a HashPack signature is **not** checked:
+the checker has no HashPack wallet. It is still part of the feature and must be
+implemented as described.
 
 ## Constraints
 
@@ -127,17 +175,25 @@ twice.
 - The operator comes from the server-side environment variables
   `HEDERA_OPERATOR_ID` and `HEDERA_OPERATOR_KEY`. The key is an ECDSA private
   key in hex and may carry a `0x` prefix.
-- All signing happens in server routes under `packages/nextjs/app/api/`,
-  following the existing pattern in `packages/nextjs/app/api/hedera/`. The
-  browser only ever calls those routes.
+- Every signature made with the operator key or a demo account's key happens
+  in server routes under `packages/nextjs/app/api/`, following the existing
+  pattern in `packages/nextjs/app/api/hedera/`. The only signing in the browser
+  is HashPack's, through WalletConnect.
 - Keeping the market — token ids, account ids and demo keys — in server memory
   is fine; it does not need to survive a server restart.
 - Testnet only.
-- No new dependencies.
+- The only new dependencies allowed are those HashPack signing needs:
+  `@hashgraph/hedera-wallet-connect` with Reown AppKit (`@reown/appkit` and its
+  peers), configured from `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`. Wallet
+  transactions are built with `@hiero-ledger/sdk` and sent to HashPack with
+  `hedera_signAndExecuteTransaction`. Add the variable, empty, to
+  `packages/nextjs/.env.example`.
+- MetaMask and EVM wallets are not used for signing: scheduled transactions are
+  native Hedera transactions.
 
 ## Out of scope
 
-- Signing with a browser wallet (HashPack, MetaMask). Demo accounts only.
+- Wallets other than HashPack, and two wallets trading with each other.
 - Settling on a future date (`waitForExpiry`), partial fills, order books.
 - Real USDC; the stablecoin is a token the app creates.
 - Logging trades to the Hedera Consensus Service.
