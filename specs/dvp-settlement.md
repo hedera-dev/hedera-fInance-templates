@@ -43,6 +43,14 @@ or `failed`. The server reports each step as it starts and finishes (for
 example by streaming one JSON line per event), so the list reflects real
 progress, not a timer.
 
+The Setup section stays short enough that `#setup-market` is visible without
+scrolling: the title, a one-line summary and the button share the top of the
+card; each step is one line (a number, or its state marker, then its label and
+any ids it created); and the per-step explanations sit in a collapsed
+"What each step does" section that starts closed. Step labels line up whatever
+the marker. When setup finishes, the page scrolls the market into view. Form
+labels across the page sit above their inputs, consistently.
+
 After setup completes, the page shows:
 
 - `#security-token-id` — the security token id, e.g. `0.0.1234`
