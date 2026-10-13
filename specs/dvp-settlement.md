@@ -204,6 +204,10 @@ implemented as described.
   is HashPack's, through WalletConnect.
 - Keeping the market — token ids, account ids and demo keys — in server memory
   is fine; it does not need to survive a server restart.
+- The operator pays every transaction fee, including for transactions the demo
+  accounts co-sign. Demo accounts are created with at most `1` HBAR each: a
+  previous build gave each one 15 HBAR, so every `Set up market` cost the
+  operator about 47 HBAR and repeated setups drained a 660 HBAR account.
 - Testnet only.
 - The only new dependencies allowed are those HashPack signing needs:
   `@hashgraph/hedera-wallet-connect` with Reown AppKit (`@reown/appkit` and its
