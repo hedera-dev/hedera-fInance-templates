@@ -31,8 +31,13 @@ import {
 import type { MarketSnapshot, PartySnapshot } from "~~/services/hedera/types";
 
 const SELLER_INITIAL_SECURITY = 200;
+
+// Hedera refuses a schedule whose body matches one that still exists (executed schedules
+// linger until expiry), so an identical repeat trade needs a distinct memo.
+const tradeMemo = () => `DvP trade ${Date.now()}`;
 const BUYER_INITIAL_PAYMENT = 10000;
-const DEMO_ACCOUNT_OPENING_BALANCE = new Hbar(15);
+// The operator pays every fee; demo accounts only co-sign, so they need almost no HBAR.
+const DEMO_ACCOUNT_OPENING_BALANCE = new Hbar(1);
 
 async function partySnapshot(accountId: string, market: Market): Promise<PartySnapshot> {
   const balances = await fetchPartyBalances(accountId, market.securityTokenId, market.paymentTokenId);
@@ -259,7 +264,7 @@ export async function proposeTradeDemo(
 
     const scheduleTx = buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
       .schedule()
-      .setScheduleMemo("DvP trade")
+      .setScheduleMemo(tradeMemo())
       .freezeWith(client);
     const signed = await scheduleTx.sign(sellerKey);
     const response = await signed.execute(client);
@@ -342,7 +347,7 @@ export async function prepareWalletSellerPropose(
 
     const scheduleTx = buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
       .schedule()
-      .setScheduleMemo("DvP trade")
+      .setScheduleMemo(tradeMemo())
       .setTransactionId(TransactionId.generate(sellerAccountId))
       .freezeWith(client);
 

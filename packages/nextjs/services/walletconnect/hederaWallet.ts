@@ -2,8 +2,17 @@
  * Client-only HashPack connectivity via WalletConnect / Reown AppKit. The app never holds the
  * wallet's key: every signature is a `hedera_signAndExecuteTransaction` request relayed through
  * WalletConnect to HashPack. Only import this from client components.
+ *
+ * Wiring follows `@hashgraph/hedera-wallet-connect`: a `HederaProvider` is created first and
+ * handed to AppKit as its `universalProvider`. Signing is called on that `HederaProvider` —
+ * `appKit.getProvider()` returns an object without the `hedera_*` methods.
  */
-import { HederaAdapter, HederaChainDefinition, hederaNamespace } from "@hashgraph/hedera-wallet-connect";
+import {
+  HederaAdapter,
+  HederaChainDefinition,
+  HederaProvider,
+  hederaNamespace,
+} from "@hashgraph/hedera-wallet-connect";
 import { type AppKit, createAppKit } from "@reown/appkit";
 
 const HEDERA_TESTNET = HederaChainDefinition.Native.Testnet;
@@ -13,43 +22,62 @@ const HEDERA_TESTNET = HederaChainDefinition.Native.Testnet;
 // both accept it at runtime; this alias documents the cast instead of sprinkling `as any`.
 type Namespace = NonNullable<Parameters<AppKit["getAccount"]>[0]>;
 const HEDERA_NS = hederaNamespace as unknown as Namespace;
+// HederaProvider extends WalletConnect's UniversalProvider at runtime; AppKit types the option
+// against its own copy of that class.
+type AppKitUniversalProvider = NonNullable<Parameters<typeof createAppKit>[0]["universalProvider"]>;
 
-type HederaRequestProvider = {
-  hedera_signAndExecuteTransaction: (params: { signerAccountId: string; transaction: string[] }) => Promise<{
-    transactionId?: string;
-    nodeId?: string;
-  }>;
-};
+export type HederaWallet = { kit: AppKit; provider: HederaProvider };
 
-let appKit: AppKit | null = null;
-let appKitProjectId: string | null = null;
+let wallet: Promise<HederaWallet> | null = null;
+let walletProjectId: string | null = null;
 
-/** Lazily creates the AppKit instance. Returns null until a project id is configured. */
-export function getHederaAppKit(projectId: string | undefined | null): AppKit | null {
+/** Lazily creates the HederaProvider and AppKit once. Returns null until a project id is configured. */
+export function getHederaWallet(projectId: string | undefined | null): Promise<HederaWallet> | null {
   if (!projectId) return null;
-  if (appKit && appKitProjectId === projectId) return appKit;
+  if (wallet && walletProjectId === projectId) return wallet;
 
-  const adapter = new HederaAdapter({
-    projectId,
-    networks: [HEDERA_TESTNET],
-    namespace: hederaNamespace,
-  });
-
-  appKit = createAppKit({
-    adapters: [adapter],
-    networks: [HEDERA_TESTNET],
-    defaultNetwork: HEDERA_TESTNET,
-    projectId,
-    metadata: {
+  walletProjectId = projectId;
+  wallet = (async () => {
+    const metadata = {
       name: "Hedera DvP Desk",
       description: "Delivery-versus-payment settlement demo",
       url: typeof window !== "undefined" ? window.location.origin : "https://hedera.com",
       icons: [],
-    },
-    features: { analytics: false, email: false, socials: [] },
-  });
-  appKitProjectId = projectId;
-  return appKit;
+    };
+    const provider = await HederaProvider.init({ projectId, metadata });
+    restoreProviders(provider);
+
+    const kit = createAppKit({
+      adapters: [new HederaAdapter({ projectId, networks: [HEDERA_TESTNET], namespace: hederaNamespace })],
+      universalProvider: provider as unknown as AppKitUniversalProvider,
+      networks: [HEDERA_TESTNET],
+      defaultNetwork: HEDERA_TESTNET,
+      projectId,
+      metadata,
+      features: { analytics: false, email: false, socials: [] },
+    });
+    return { kit, provider };
+  })();
+  return wallet;
+}
+
+/**
+ * After a page refresh `HederaProvider.init` restores the WalletConnect session but leaves
+ * `provider.namespaces` empty, so the native provider is never created and signing fails with
+ * "nativeProvider not initialized". Rebuild it from the session's approved namespaces.
+ * Same fix as scaffold-hbar's hedera-demo template.
+ */
+function restoreProviders(provider: HederaProvider): void {
+  const internals = provider as unknown as {
+    session?: { namespaces?: Record<string, unknown> };
+    namespaces?: Record<string, unknown>;
+    nativeProvider?: unknown;
+    initProviders?: () => void;
+  };
+  const sessionNamespaces = internals.session?.namespaces;
+  if (!sessionNamespaces || internals.nativeProvider) return;
+  if (Object.keys(internals.namespaces ?? {}).length === 0) internals.namespaces = { ...sessionNamespaces };
+  internals.initProviders?.();
 }
 
 export type HederaWalletAccount = { accountId: string; isConnected: boolean };
@@ -80,16 +108,14 @@ export async function disconnectHederaWallet(kit: AppKit): Promise<void> {
  * the server. Returns the network transaction id so the server can look up what happened.
  */
 export async function signAndExecuteWithWallet(
-  kit: AppKit,
+  provider: HederaProvider,
   accountId: string,
   transactionBase64: string,
 ): Promise<string> {
-  const provider = kit.getProvider<HederaRequestProvider>(HEDERA_NS);
-  if (!provider) throw new Error("HashPack is not connected.");
-
+  restoreProviders(provider);
   const result = await provider.hedera_signAndExecuteTransaction({
     signerAccountId: `hedera:testnet:${accountId}`,
-    transaction: [transactionBase64],
+    transactionList: transactionBase64,
   });
 
   if (!result.transactionId) throw new Error("HashPack did not return a transaction id.");

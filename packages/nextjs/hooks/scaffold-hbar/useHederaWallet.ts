@@ -5,7 +5,7 @@ import {
   type HederaWalletAccount,
   disconnectHederaWallet,
   getConnectedAccount,
-  getHederaAppKit,
+  getHederaWallet,
   openHederaConnectModal,
   signAndExecuteWithWallet,
   subscribeToAccount,
@@ -24,30 +24,37 @@ export function useHederaWallet(projectId: string) {
 
   useEffect(() => {
     if (!isConfigured) return;
-    const kit = getHederaAppKit(projectId);
-    if (!kit) return;
-    setAccount(getConnectedAccount(kit));
-    return subscribeToAccount(kit, setAccount);
+    let unsubscribe: (() => void) | undefined;
+    let cancelled = false;
+    void getHederaWallet(projectId)?.then(({ kit }) => {
+      if (cancelled) return;
+      setAccount(getConnectedAccount(kit));
+      unsubscribe = subscribeToAccount(kit, setAccount);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [projectId, isConfigured]);
 
   const connect = useCallback(async () => {
-    const kit = getHederaAppKit(projectId);
-    if (!kit) return;
-    await openHederaConnectModal(kit);
+    const wallet = await getHederaWallet(projectId);
+    if (!wallet) return;
+    await openHederaConnectModal(wallet.kit);
   }, [projectId]);
 
   const disconnect = useCallback(async () => {
-    const kit = getHederaAppKit(projectId);
-    if (!kit) return;
-    await disconnectHederaWallet(kit);
+    const wallet = await getHederaWallet(projectId);
+    if (!wallet) return;
+    await disconnectHederaWallet(wallet.kit);
     setAccount(NOT_CONNECTED);
   }, [projectId]);
 
   const signAndExecute = useCallback(
     async (transactionBase64: string) => {
-      const kit = getHederaAppKit(projectId);
-      if (!kit || !account.accountId) throw new Error("HashPack is not connected.");
-      return signAndExecuteWithWallet(kit, account.accountId, transactionBase64);
+      const wallet = await getHederaWallet(projectId);
+      if (!wallet || !account.accountId) throw new Error("HashPack is not connected.");
+      return signAndExecuteWithWallet(wallet.provider, account.accountId, transactionBase64);
     },
     [projectId, account.accountId],
   );
