@@ -126,7 +126,16 @@ account replaces the demo party of the chosen role:
 - *Onboarding* has the wallet sign a token association for both tokens; the
   server then grants the wallet KYC on the security and funds it like the demo
   party it replaces — `200` security as Seller, `20000` stablecoin as Buyer.
-  Its balances appear on the page alongside the others.
+  Its balances appear on the page alongside the others. Setup hands the whole
+  initial supply of both tokens to the demo parties, so onboarding **mints**
+  the wallet's share before transferring it — otherwise the treasury has
+  nothing left to fund it with. Onboarding twice, or in the other role, must
+  fund the wallet again.
+- *The operator account cannot be onboarded.* The operator issues both tokens
+  and holds their treasury, so funding it would be a transfer to itself that
+  moves nothing. Onboarding the operator's account id is refused before
+  anything is signed, and `#wallet-state` says to connect a different HashPack
+  account.
 - *As Seller*, `#propose-trade` builds the same two-leg scheduled transfer
   against the selected demo Buyer and asks HashPack to sign and submit the
   schedule creation. `#buyer-sign` then signs as the demo Buyer on the server.
