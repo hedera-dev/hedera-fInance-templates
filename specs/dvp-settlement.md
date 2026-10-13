@@ -30,6 +30,19 @@ no operator configured, `#setup-market` is disabled and `#config-error` names
 the two environment variables to set: `HEDERA_OPERATOR_ID` and
 `HEDERA_OPERATOR_KEY`.
 
+Setup explains itself and shows its progress. Before it runs, the Setup section
+says in a short paragraph what setup does, who pays (the operator), roughly what
+it costs, and that running it again starts a fresh market. It lists the six
+steps in order, each with a one-line explanation, as elements
+`#setup-step-accounts`, `#setup-step-security`, `#setup-step-stablecoin`,
+`#setup-step-associate`, `#setup-step-kyc` and `#setup-step-fund`. While setup
+runs, each step shows its state as it happens — a spinner while running, a check
+when done (with the ids it created, where it created any), a cross if it failed —
+and carries that state in a `data-status` attribute: `pending`, `active`, `done`
+or `failed`. The server reports each step as it starts and finishes (for
+example by streaming one JSON line per event), so the list reflects real
+progress, not a timer.
+
 After setup completes, the page shows:
 
 - `#security-token-id` — the security token id, e.g. `0.0.1234`
@@ -129,8 +142,19 @@ account replaces the demo party of the chosen role:
   Its balances appear on the page alongside the others. Setup hands the whole
   initial supply of both tokens to the demo parties, so onboarding **mints**
   the wallet's share before transferring it — otherwise the treasury has
-  nothing left to fund it with. Onboarding twice, or in the other role, must
-  fund the wallet again.
+  nothing left to fund it with. A wallet may hold both roles: onboarding in the
+  second role funds it for that role and does not ask HashPack to associate the
+  tokens again (that would fail with `TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT`).
+  Onboarding the same account in the same role again is refused, so tokens
+  cannot be minted repeatedly.
+- *Demo accounts cannot be onboarded.* Onboarding a demo party's account id is
+  refused; otherwise anyone could, for example, grant KYC to the unverified
+  Buyer and break the rejection demo. Nothing can be onboarded while a trade is
+  pending.
+- *HashPack must be on the onboarded account.* Wallet transactions are built
+  with the onboarded account as payer. If HashPack is switched to another
+  account, the wallet's trade controls are disabled and `#wallet-state` names
+  the account to switch back to.
 - *The operator account cannot be onboarded.* The operator issues both tokens
   and holds their treasury, so funding it would be a transfer to itself that
   moves nothing. Onboarding the operator's account id is refused before
@@ -152,6 +176,11 @@ and `#wallet-state` says to connect HashPack. When the WalletConnect project id
 is not configured, `#wallet-config-error` names the variable to set,
 `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`, and the demo-account flow keeps
 working unaffected. Switching back to `Demo accounts` restores the demo flow.
+
+**Trade terms are validated before anything is signed.** The quantity must be a
+whole number of at least 1 (the security has 0 decimals) and the price positive
+with at most 6 decimals; anything else is refused with a readable message rather
+than silently rounded into a different trade than the one shown.
 
 **Balances are read from the network.** Displayed balances agree with the mirror
 node for the same accounts once the mirror node has caught up, and refresh after
@@ -217,6 +246,16 @@ implemented as described.
   accounts co-sign. Demo accounts are created with at most `1` HBAR each: a
   previous build gave each one 15 HBAR, so every `Set up market` cost the
   operator about 47 HBAR and repeated setups drained a 660 HBAR account.
+- The server never trusts trade terms or roles sent back by the browser after a
+  wallet signs: it records the terms it prepared itself, checks that a wallet
+  transaction was submitted by the onboarded account, checks the wallet's own
+  transaction succeeded, and only lets a wallet sign a trade whose buyer is that
+  wallet.
+- Waiting for the mirror node after settlement must use the scheduled
+  transaction's id with `?scheduled=true`: the SDK prints scheduled ids with a
+  bare `?scheduled` suffix, which the mirror node rejects with a 400.
+- `HEDERA_OPERATOR_KEY` accepts a raw ECDSA hex key (with or without `0x`) or a
+  DER-encoded ECDSA or ED25519 key.
 - Testnet only.
 - The only new dependencies allowed are those HashPack signing needs:
   `@hashgraph/hedera-wallet-connect` with Reown AppKit (`@reown/appkit` and its
