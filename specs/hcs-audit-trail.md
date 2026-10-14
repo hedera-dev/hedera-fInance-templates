@@ -55,14 +55,25 @@ After setup completes, the page shows:
 
 Every id links to its page on HashScan testnet.
 
-**Actions.** After setup, one control per token action, each performing a real
-Hedera transaction on the holder and then publishing its audit entry:
+**Actions.** After setup, a target account field `#action-account`, pre-filled
+with the demo holder (and reset to the new holder after a fresh setup), with a
+`Use demo holder` shortcut when it holds anything else and a short note that any
+testnet account works once it has associated the token. Then one control per
+token action, each performing a real Hedera transaction on the target account
+and then publishing its audit entry:
 
 - `#action-grant-kyc` — `Grant KYC`
+- `#action-freeze` — `Freeze`
+- `#action-unfreeze` — `Unfreeze`
 - `#action-transfer` — `Transfer`, sending the amount in `#transfer-amount`
-  (whole number, default `100`) from the Issuer to the holder
-- `#action-freeze` — `Freeze holder`
-- `#action-unfreeze` — `Unfreeze holder`
+  (whole number, default `100`) from the Issuer to the target
+
+An empty target falls back to the demo holder. A target that is not an account
+id (`0.0.1234`) is refused with a readable message before anything is signed,
+and so is the Issuer itself, which cannot be the target of its own token
+actions. An account that has not associated the token is a valid target: the
+network refuses the action (`TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`) and that refusal
+is logged like any other result.
 
 Every action can be pressed at any time; an action the network refuses (for
 example a transfer before KYC is granted, or while the holder is frozen) is
@@ -71,8 +82,10 @@ shows that it is working and cannot be pressed twice.
 
 **The trail.** `#trail` lists every entry on the topic, newest first, as rows
 with the class `trail-entry`. Each row shows the sequence number, the consensus
-timestamp, the event, the result, the referenced transaction id (linked to
-HashScan) and the publishing account.
+timestamp as a readable local date and time (the raw timestamp on hover), the
+event, the target account, the result, the referenced transaction id (linked to
+HashScan, shortened with the full id on hover) and the publishing account. Every
+column is visible without horizontal scrolling on a 1100px-wide window.
 
 **A forgery attempt.** `#forge-entry`, labelled `Try to forge an entry`, has an
 account that is not an authorised publisher submit an entry to the topic.
@@ -97,9 +110,12 @@ pre-filled from the `topic` query parameter. Below it:
   `BROKEN`, the first entry that failed and why
 - `#feed-count` — the number of entries read
 - `#feed` — every entry, oldest first, as rows with the class `feed-entry`, each
-  showing the sequence number, consensus timestamp, event, result, referenced
-  transaction, publishing account, and one mark per check: sequence, chain,
-  transaction
+  showing the sequence number, the readable consensus time, the event with its
+  result beneath it (success and failure coloured differently), the target
+  account, the referenced transaction (shortened, full id on hover), the
+  publishing account, and one mark per check — sequence, chain, transaction —
+  in a single column, each mark explained on hover. Every column is visible
+  without horizontal scrolling on a 1100px-wide window.
 
 Form labels across both pages sit above their inputs, consistently.
 
@@ -117,7 +133,7 @@ a JSON object with exactly these fields:
 - `v` — `1`
 - `event` — one of `issue`, `grant_kyc`, `transfer`, `freeze`, `unfreeze`
 - `token` — the security token id
-- `account` — the holder account id, or `null` for `issue`
+- `account` — the target account id, or `null` for `issue`
 - `amount` — the whole-token amount for `transfer`, otherwise `null`
 - `tx` — the id of the Hedera transaction the entry records, in SDK form
   (`0.0.1234@1700000000.123456789`)
@@ -195,6 +211,10 @@ display `undefined`, `NaN`, `null`, or an empty value while visible.
    holder's balance did not change.
 4. Press `#action-grant-kyc`, then `#action-transfer`. Confirm two entries with
    `SUCCESS`, the holder's KYC on the mirror node, and a balance of `100`.
+   Then set `#action-account` to an account that has not associated the token
+   and press `#action-grant-kyc`: confirm an entry for that account with
+   `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`. Set it to the Issuer's account and confirm
+   the action is refused before anything is signed. Press `Use demo holder`.
 5. Press `#action-freeze`, then `#action-transfer`: confirm the transfer entry
    carries `ACCOUNT_FROZEN_FOR_TOKEN`. Press `#action-unfreeze`.
 6. Press `#forge-entry`. Confirm `#forge-result` shows `INVALID_SIGNATURE` and
