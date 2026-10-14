@@ -4,9 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NextPage } from "next";
 import { HashScanLink } from "~~/app/_components/dvp/HashScanLink";
 import { SetupPanel } from "~~/app/_components/dvp/SetupPanel";
+import { TradeChanges } from "~~/app/_components/dvp/TradeChanges";
 import { useHederaWallet } from "~~/hooks/scaffold-hbar/useHederaWallet";
 import * as dvp from "~~/services/hedera/dvpClient";
-import type { BuyerChoice, MarketSnapshot, WalletRole } from "~~/services/hedera/types";
+import {
+  BUYER_INITIAL_PAYMENT,
+  type BuyerChoice,
+  type MarketSnapshot,
+  SELLER_INITIAL_SECURITY,
+  type WalletRole,
+} from "~~/services/hedera/types";
 import { notification } from "~~/utils/scaffold-hbar/notification";
 
 type SigningMode = "demo" | "hashpack";
@@ -315,6 +322,11 @@ const Home: NextPage = () => {
                 )}
               </tbody>
             </table>
+            <span id="starting-position" className="text-xs text-base-content/60 mt-3">
+              Setup gave the Seller {SELLER_INITIAL_SECURITY} security and each Buyer{" "}
+              {BUYER_INITIAL_PAYMENT.toLocaleString()} stablecoin. A trade moves tokens between parties; it never
+              creates any.
+            </span>
           </section>
 
           <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full">
@@ -378,17 +390,18 @@ const Home: NextPage = () => {
 
             {trade && (
               <div className="text-sm flex flex-col gap-1">
-                <p>
+                <span>
                   Schedule: <HashScanLink htmlId="schedule-id" hederaId={trade.scheduleId} kind="schedule" />
-                </p>
-                <p>
+                </span>
+                <span>
                   Status: <span id="trade-status">{trade.status}</span>
-                </p>
+                </span>
                 {trade.settlementResult && (
-                  <p>
+                  <span>
                     Settlement result: <span id="settlement-result">{trade.settlementResult}</span>
-                  </p>
+                  </span>
                 )}
+                <TradeChanges trade={trade} />
               </div>
             )}
           </section>

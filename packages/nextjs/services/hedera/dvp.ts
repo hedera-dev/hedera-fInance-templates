@@ -30,14 +30,16 @@ import {
   requireMarket,
   setMarket,
 } from "~~/services/hedera/store";
-import type { MarketSnapshot, PartySnapshot } from "~~/services/hedera/types";
-
-const SELLER_INITIAL_SECURITY = 200;
+import {
+  BUYER_INITIAL_PAYMENT,
+  type MarketSnapshot,
+  type PartySnapshot,
+  SELLER_INITIAL_SECURITY,
+} from "~~/services/hedera/types";
 
 // Hedera refuses a schedule whose body matches one that still exists (executed schedules
 // linger until expiry), so an identical repeat trade needs a distinct memo.
 const tradeMemo = () => `DvP trade ${Date.now()}`;
-const BUYER_INITIAL_PAYMENT = 10000;
 // The operator pays every fee; demo accounts only co-sign, so they need almost no HBAR.
 const DEMO_ACCOUNT_OPENING_BALANCE = new Hbar(1);
 

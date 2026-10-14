@@ -10,6 +10,10 @@ export type TradeStatus = "PENDING" | "SETTLED" | "REJECTED";
 export type PartyBalances = { security: string; payment: string };
 export type PartySnapshot = { accountId: string; balances: PartyBalances };
 
+/** What setup hands out: shared by the server (which funds) and the page (which explains it). */
+export const SELLER_INITIAL_SECURITY = 200;
+export const BUYER_INITIAL_PAYMENT = 10000;
+
 export type TradeSnapshot = {
   scheduleId: string;
   status: TradeStatus;
