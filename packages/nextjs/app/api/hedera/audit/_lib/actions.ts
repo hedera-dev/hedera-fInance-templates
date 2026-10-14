@@ -82,4 +82,16 @@ export async function transferToHolder(
   }
 }
 
+/**
+ * The account an action applies to: the demo holder unless the caller names another testnet
+ * account. The issuer cannot target itself (it is the token's treasury and key holder).
+ */
+export function resolveTarget(raw: unknown, holderAccountId: string, issuerAccountId: string): string {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return holderAccountId;
+  const id = String(raw).trim();
+  if (!/^0\.0\.\d+$/.test(id)) throw new Error("Target account must look like 0.0.1234.");
+  if (id === issuerAccountId) throw new Error("The issuer cannot be the target of its own token actions.");
+  return id;
+}
+
 export const TOKEN_ACTIONS: readonly TokenAction[] = ["grant_kyc", "transfer", "freeze", "unfreeze"];

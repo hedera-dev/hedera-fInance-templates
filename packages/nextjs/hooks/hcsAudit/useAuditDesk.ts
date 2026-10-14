@@ -130,11 +130,11 @@ export function useAuditDesk() {
     }
   }, [refreshDesk]);
 
-  const performIssuerAction = useCallback(async (action: TokenAction, amount?: number) => {
+  const performIssuerAction = useCallback(async (action: TokenAction, amount?: number, account?: string) => {
     setBusyAction(action);
     setActionError(null);
     try {
-      const data = await postJson<{ entry: AuditEntry }>("/api/hedera/audit/action", { action, amount });
+      const data = await postJson<{ entry: AuditEntry }>("/api/hedera/audit/action", { action, amount, account });
       setLastEntry(data.entry);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
@@ -149,6 +149,7 @@ export function useAuditDesk() {
       walletAccountId: string,
       signAndSubmit: (bytes: string) => Promise<{ transactionId: string }>,
       amount?: number,
+      account?: string,
     ) => {
       setBusyAction(action);
       setActionError(null);
@@ -158,6 +159,7 @@ export function useAuditDesk() {
           {
             action,
             amount,
+            account,
             walletAccountId,
           },
         );

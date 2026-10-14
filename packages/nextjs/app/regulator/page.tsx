@@ -18,7 +18,7 @@ const RegulatorContent = () => {
   const { result, error } = useRegulatorFeed(topic || null);
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-5 py-10 flex flex-col gap-6">
+    <div className="w-full max-w-5xl mx-auto px-5 py-10 flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold mb-2">Regulator feed</h1>
         <p className="text-sm text-base-content/70 m-0">

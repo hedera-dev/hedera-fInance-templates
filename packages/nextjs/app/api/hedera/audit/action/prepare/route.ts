@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { freezeHolder, grantKyc, transferToHolder, unfreezeHolder } from "~~/app/api/hedera/audit/_lib/actions";
+import {
+  freezeHolder,
+  grantKyc,
+  resolveTarget,
+  transferToHolder,
+  unfreezeHolder,
+} from "~~/app/api/hedera/audit/_lib/actions";
 import { getOperator, getOperatorClient, hasOperatorEnv } from "~~/app/api/hedera/audit/_lib/operator";
 import { nextEntry, prepareEntryForWallet } from "~~/app/api/hedera/audit/_lib/publish";
 import { getDesk, requireSetUp } from "~~/app/api/hedera/audit/_lib/state";
@@ -23,6 +29,7 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as {
     action?: string;
     amount?: number;
+    account?: string;
     walletAccountId?: string;
   } | null;
   const action = body?.action as TokenAction | undefined;
@@ -45,9 +52,14 @@ export async function POST(req: Request) {
   }
 
   const tokenId = desk.tokenId;
-  const holderAccountId = desk.holderAccountId;
   const client = getOperatorClient();
   const { accountId: operatorId } = getOperator();
+  let holderAccountId: string;
+  try {
+    holderAccountId = resolveTarget(body?.account, desk.holderAccountId, operatorId.toString());
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
+  }
 
   let amount: number | null = null;
   let outcome: { tx: string; result: string };

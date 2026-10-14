@@ -30,18 +30,18 @@ const Home: NextPage = () => {
 
   const actionsDisabled = !desk.desk?.topicId || (isHashPack && (!wallet.accountId || !isAuthorizedPublisher));
 
-  const handleAction = (action: TokenAction, amount?: number) => {
+  const handleAction = (action: TokenAction, amount?: number, account?: string) => {
     if (isHashPack) {
       if (!wallet.accountId) return;
-      desk.performHashPackAction(action, wallet.accountId, wallet.signAndSubmit, amount);
+      desk.performHashPackAction(action, wallet.accountId, wallet.signAndSubmit, amount, account);
     } else {
-      desk.performIssuerAction(action, amount);
+      desk.performIssuerAction(action, amount, account);
     }
   };
 
   return (
     <div className="flex items-center flex-col grow">
-      <div className="w-full max-w-3xl mx-auto px-5 py-10 flex flex-col gap-6">
+      <div className="w-full max-w-5xl mx-auto px-5 py-10 flex flex-col gap-6">
         <div>
           <h1 className="text-2xl font-bold mb-2">Issuer compliance desk</h1>
           <p className="text-sm text-base-content/70 m-0">
@@ -81,6 +81,7 @@ const Home: NextPage = () => {
             />
 
             <ActionsPanel
+              holderAccountId={desk.desk?.holderAccountId ?? null}
               disabled={actionsDisabled}
               busyAction={desk.busyAction}
               actionError={desk.actionError}

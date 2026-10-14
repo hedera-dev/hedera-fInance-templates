@@ -2,6 +2,7 @@
 
 import { useTopicMessages } from "~~/hooks/hcsAudit/useTopicMessages";
 import { decodeEntryBase64 } from "~~/services/hcsAudit/entry";
+import { formatConsensus, shortTx } from "~~/services/hcsAudit/format";
 import { hashscanTransactionUrl } from "~~/services/hcsAudit/mirror";
 
 export const TrailTable = ({ topicId }: { topicId: string | null }) => {
@@ -19,12 +20,13 @@ export const TrailTable = ({ topicId }: { topicId: string | null }) => {
       {!loading && rows.length === 0 && !error && <p className="text-sm text-base-content/60">No entries yet.</p>}
       <div id="trail" className="overflow-x-auto">
         {rows.length > 0 && (
-          <table className="table table-sm">
+          <table className="table table-sm whitespace-nowrap">
             <thead>
               <tr>
                 <th>#</th>
                 <th>Consensus time</th>
                 <th>Event</th>
+                <th>Account</th>
                 <th>Result</th>
                 <th>Transaction</th>
                 <th>Published by</th>
@@ -36,8 +38,9 @@ export const TrailTable = ({ topicId }: { topicId: string | null }) => {
                 return (
                   <tr key={msg.sequence_number} className="trail-entry" data-sequence={msg.sequence_number}>
                     <td>{msg.sequence_number}</td>
-                    <td>{msg.consensus_timestamp}</td>
+                    <td title={msg.consensus_timestamp}>{formatConsensus(msg.consensus_timestamp)}</td>
                     <td>{decoded?.entry.event ?? "(unreadable)"}</td>
+                    <td className="font-mono text-xs">{decoded?.entry.account ?? "—"}</td>
                     <td>{decoded?.entry.result ?? "—"}</td>
                     <td>
                       {decoded ? (
@@ -45,15 +48,16 @@ export const TrailTable = ({ topicId }: { topicId: string | null }) => {
                           href={hashscanTransactionUrl(decoded.entry.tx)}
                           target="_blank"
                           rel="noreferrer"
-                          className="link link-primary"
+                          className="link link-primary font-mono text-xs"
+                          title={decoded.entry.tx}
                         >
-                          {decoded.entry.tx}
+                          {shortTx(decoded.entry.tx)}
                         </a>
                       ) : (
                         "—"
                       )}
                     </td>
-                    <td>{msg.payer_account_id}</td>
+                    <td className="font-mono text-xs">{msg.payer_account_id}</td>
                   </tr>
                 );
               })}
