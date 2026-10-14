@@ -13,7 +13,8 @@ export type PartySnapshot = { accountId: string; balances: PartyBalances };
 
 /** What setup hands out: shared by the server (which funds) and the page (which explains it). */
 export const SELLER_INITIAL_SECURITY = 200;
-export const BUYER_INITIAL_PAYMENT = 10000;
+export const BUYER_INITIAL_PAYMENT = 20000;
+export const UNVERIFIED_BUYER_INITIAL_PAYMENT = 10000;
 
 /** A trade settling on the Buyer's signature expires this long after it is proposed. */
 export const ON_SIGNATURE_EXPIRY_MINUTES = 30;

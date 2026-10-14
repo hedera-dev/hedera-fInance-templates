@@ -38,6 +38,8 @@ export type Trade = {
   settlesAt: string | null;
   /** ISO timestamp the trade was proposed at. */
   proposedAt: string;
+  /** Internal: claims this trade for one in-flight settlement, so a race never finalizes it twice. */
+  finalizing?: boolean;
 };
 
 export type Market = {

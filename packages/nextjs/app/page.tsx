@@ -17,6 +17,7 @@ import {
   SELLER_INITIAL_SECURITY,
   type SettlementMode,
   type TradeSnapshot,
+  UNVERIFIED_BUYER_INITIAL_PAYMENT,
   type WalletRole,
 } from "~~/services/hedera/types";
 import { notification } from "~~/utils/scaffold-hbar/notification";
@@ -532,9 +533,10 @@ const Home: NextPage = () => {
                 </tbody>
               </table>
               <span id="starting-position" className="text-xs text-base-content/60 mt-3">
-                Setup gave the Seller {SELLER_INITIAL_SECURITY} security and each Buyer{" "}
-                {BUYER_INITIAL_PAYMENT.toLocaleString()} stablecoin. A trade moves tokens between parties; it never
-                creates any.
+                Seller starts with {SELLER_INITIAL_SECURITY} security. Buyer starts with{" "}
+                {BUYER_INITIAL_PAYMENT.toLocaleString()} stablecoin. Unverified buyer starts with{" "}
+                {UNVERIFIED_BUYER_INITIAL_PAYMENT.toLocaleString()} stablecoin. A trade moves tokens between parties; it
+                never creates any.
               </span>
             </section>
           )}

@@ -49,6 +49,7 @@ import {
   ON_SIGNATURE_EXPIRY_MINUTES,
   type PartySnapshot,
   SELLER_INITIAL_SECURITY,
+  UNVERIFIED_BUYER_INITIAL_PAYMENT,
 } from "~~/services/hedera/types";
 
 // Hedera refuses a schedule whose body matches one that still exists (executed schedules
@@ -145,7 +146,7 @@ async function createSecurityToken(client: Client, treasury: string): Promise<st
 async function createPaymentToken(client: Client, treasury: string): Promise<string> {
   const operatorKey = client.operatorPublicKey;
   if (!operatorKey) throw new Error("Operator key is not available on the client");
-  const totalSupply = toBaseUnits(BUYER_INITIAL_PAYMENT * 2, PAYMENT_DECIMALS);
+  const totalSupply = toBaseUnits(BUYER_INITIAL_PAYMENT + UNVERIFIED_BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
   const receipt = await (
     await new TokenCreateTransaction()
       .setTokenName("DvP Stablecoin")
@@ -235,13 +236,14 @@ export async function setupMarket(
 
     await step("fund", async () => {
       const securityAmount = toBaseUnits(SELLER_INITIAL_SECURITY, SECURITY_DECIMALS);
-      const paymentAmount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
+      const buyerPaymentAmount = toBaseUnits(BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
+      const unverifiedBuyerPaymentAmount = toBaseUnits(UNVERIFIED_BUYER_INITIAL_PAYMENT, PAYMENT_DECIMALS);
       const fundingResponse = await new TransferTransaction()
         .addTokenTransfer(securityTokenId, operatorId.toString(), -securityAmount)
         .addTokenTransfer(securityTokenId, seller.accountId, securityAmount)
-        .addTokenTransfer(paymentTokenId, operatorId.toString(), -(paymentAmount * 2n))
-        .addTokenTransfer(paymentTokenId, buyer.accountId, paymentAmount)
-        .addTokenTransfer(paymentTokenId, unverifiedBuyer.accountId, paymentAmount)
+        .addTokenTransfer(paymentTokenId, operatorId.toString(), -(buyerPaymentAmount + unverifiedBuyerPaymentAmount))
+        .addTokenTransfer(paymentTokenId, buyer.accountId, buyerPaymentAmount)
+        .addTokenTransfer(paymentTokenId, unverifiedBuyer.accountId, unverifiedBuyerPaymentAmount)
         .execute(client);
       await fundingResponse.getReceipt(client);
       await waitForMirrorIndexing(fundingResponse.transactionId.toString());
@@ -503,9 +505,16 @@ export async function cancelTradeDemo(scheduleId: string): Promise<MarketSnapsho
 
 /**
  * Settles the result of a schedule's execution (whether triggered by this process's own sign
- * call, or discovered later by the reconciler for a set-time trade).
+ * call, or discovered later by the reconciler for a set-time trade). Guarded against running
+ * twice for the same trade: an explicit sign can race the background reconciler, both seeing
+ * the trade still unsettled before either has written its outcome, which would otherwise publish
+ * the settlement's audit entry twice. The guard check-and-set below is synchronous (no `await`
+ * between them), so only the first caller to reach it ever proceeds.
  */
 async function finalizeTrade(trade: Trade, client: Client, market: Market): Promise<void> {
+  if (trade.finalizing || trade.status === "SETTLED" || trade.status === "REJECTED") return;
+  trade.finalizing = true;
+
   const settleReceipt = await new TransactionReceiptQuery()
     .setTransactionId(trade.scheduledTransactionId)
     .setValidateStatus(false)
@@ -536,19 +545,13 @@ async function finalizeTrade(trade: Trade, client: Client, market: Market): Prom
  */
 async function reconcileTrade(market: Market, trade: Trade, client: Client): Promise<void> {
   if (trade.status !== "PENDING" && trade.status !== "SCHEDULED") return;
-  const info = await fetchScheduleInfo(trade.scheduleId);
-  if (!info) return;
 
-  if (info.executedTimestamp) {
-    await finalizeTrade(trade, client, market);
-    return;
-  }
-  if (info.deleted) {
-    // Normally set directly by the cancel flow; this is just a safety net against a missed update.
-    trade.status = "CANCELLED";
-    return;
-  }
-  if (Date.now() > new Date(trade.expiresAt).getTime()) {
+  // A trade still PENDING (the Buyer never signed) past its deadline is EXPIRED — even though,
+  // for a waitForExpiry (set-time) schedule, Hedera attempts execution anyway at expiry with only
+  // the Seller's signature and fails it (e.g. INVALID_SIGNATURE). That failure is an artifact of
+  // the scheduling mechanism, not a DvP rejection: the trade never reached agreement, so check
+  // this before asking the mirror node what happened to the schedule's execution.
+  if (trade.status === "PENDING" && Date.now() > new Date(trade.expiresAt).getTime()) {
     trade.status = "EXPIRED";
     await publishAuditEvent(client, market, {
       event: "expired",
@@ -560,6 +563,21 @@ async function reconcileTrade(market: Market, trade: Trade, client: Client): Pro
       tx: null,
       result: null,
     });
+    return;
+  }
+
+  // Only a fully-signed (SCHEDULED) trade — or one still within its deadline — can genuinely
+  // settle or be rejected by the network.
+  const info = await fetchScheduleInfo(trade.scheduleId);
+  if (!info) return;
+
+  if (info.executedTimestamp) {
+    await finalizeTrade(trade, client, market);
+    return;
+  }
+  if (info.deleted) {
+    // Normally set directly by the cancel flow; this is just a safety net against a missed update.
+    trade.status = "CANCELLED";
   }
 }
 
