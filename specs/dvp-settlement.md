@@ -69,12 +69,14 @@ the balances, `#starting-position` states in words what setup gave each party
 (e.g. "Seller starts with 200 security"), so a learner never mistakes what is
 left after a trade for newly created tokens.
 
-**Layout.** On a window at least 1024px wide the page has two columns. The left
-column holds what the learner *does*: the explanation, Setup, Signing and the
-trade ticket. The right column holds what the network *shows*: the market and
-its balances, the trades list and the audit log; it stays in view while the left
-column scrolls. On narrower windows the columns stack, controls first. Each card
-has a title and a one-sentence caption saying what it is for, so a learner
+**Layout.** The title and the explanation span the full width at the top. Below
+them, on a window at least 1024px wide, the page has two columns that scroll
+together with the page — neither column is pinned. The left column holds what
+the learner *does*: Signing, Setup and the trade ticket. The right column holds
+what the network *shows*: the market and its balances, the trades list and the
+audit log. Before setup, the right column holds a placeholder card saying what
+will appear there. On narrower windows the columns stack, controls first. Each
+card has a title and a one-sentence caption saying what it is for, so a learner
 always knows what they are looking at.
 
 **A trade ticket.** After setup:
@@ -287,9 +289,10 @@ twice.
 
 ## How this will be checked
 
-1. Open `/` on a window at least 1024px wide. Confirm the two columns: Setup,
-   Signing and the ticket on the left; the market, trades list and audit log
-   areas on the right. Confirm `#setup-market` is visible without scrolling.
+1. Open `/` on a window at least 1024px wide. Confirm the title and explanation
+   span the top, and below them the two columns: Signing, Setup and the ticket
+   on the left; the placeholder (later the market, trades list and audit log) on
+   the right. Scrolling the page moves both columns together. Confirm `#setup-market` is visible without scrolling.
 2. Press `#setup-market`. Read every id and balance, then confirm on the mirror
    node: both tokens exist, the security has a KYC key and a freeze key, the
    balances match, the unverified Buyer has no KYC on the security, and the
