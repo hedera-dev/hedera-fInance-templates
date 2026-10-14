@@ -1,20 +1,23 @@
+import type { ReactNode } from "react";
 import type { TradeSnapshot } from "~~/services/hedera/types";
 
 const signed = (n: number) => `${n > 0 ? "+" : "−"}${Math.abs(n).toLocaleString()}`;
 
-/**
- * What a finished trade changed for each party. Settlement is atomic, so a settled trade moved
- * exactly its quantity and price and a rejected one moved nothing: no balance re-read is needed.
- */
-export const TradeChanges = ({ trade }: { trade: TradeSnapshot }) => {
-  if (trade.status === "PENDING") return null;
+const NOTHING_MOVED_YET: Record<string, string> = {
+  PENDING: "Nothing moved yet: waiting for the Buyer's signature.",
+  SCHEDULED: "Nothing moved yet: scheduled to settle at the set time.",
+  REJECTED: "Nothing moved: the network rejected both legs together.",
+  CANCELLED: "Nothing moved: cancelled before it could settle.",
+  EXPIRED: "Nothing moved: it expired before every signature arrived.",
+};
 
-  if (trade.status === "REJECTED") {
-    return (
-      <span id="trade-changes" className="text-base-content/70">
-        Nothing moved: the network rejected both legs together.
-      </span>
-    );
+/**
+ * What a trade changed for each party, as plain content (no element id) — settlement is atomic,
+ * so a settled trade moved exactly its quantity and price and anything else moved nothing.
+ */
+export function describeTradeChanges(trade: TradeSnapshot): ReactNode {
+  if (trade.status !== "SETTLED") {
+    return <span className="text-base-content/70">{NOTHING_MOVED_YET[trade.status] ?? "Nothing moved."}</span>;
   }
 
   const seller = trade.sellerIsWallet ? "Seller (wallet)" : "Seller";
@@ -25,7 +28,7 @@ export const TradeChanges = ({ trade }: { trade: TradeSnapshot }) => {
       : "Buyer";
 
   return (
-    <span id="trade-changes" className="flex flex-col">
+    <span className="flex flex-col">
       <span>
         {seller}: <span className="text-error">{signed(-trade.quantity)} security</span>,{" "}
         <span className="text-success">{signed(trade.price)} stablecoin</span>
@@ -36,4 +39,9 @@ export const TradeChanges = ({ trade }: { trade: TradeSnapshot }) => {
       </span>
     </span>
   );
-};
+}
+
+/** The newest trade's changes, as the page's quick-read summary element. */
+export const TradeChanges = ({ trade }: { trade: TradeSnapshot }) => (
+  <span id="trade-changes">{describeTradeChanges(trade)}</span>
+);

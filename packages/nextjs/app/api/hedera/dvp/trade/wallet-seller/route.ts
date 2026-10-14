@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { errorResponse } from "~~/services/hedera/apiError";
 import { completeWalletSellerPropose, prepareWalletSellerPropose } from "~~/services/hedera/dvp";
-import type { BuyerChoice } from "~~/services/hedera/store";
+import type { BuyerChoice, SettlementMode } from "~~/services/hedera/store";
 
 type Body =
-  | { stage: "prepare"; quantity: number; price: number; buyerChoice: BuyerChoice }
+  | {
+      stage: "prepare";
+      quantity: number;
+      price: number;
+      buyerChoice: BuyerChoice;
+      settlementMode: SettlementMode;
+      settlementDelayMinutes?: number;
+    }
   | { stage: "complete"; transactionId: string };
 
 /**
@@ -15,7 +22,13 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
     if (body.stage === "prepare") {
-      const transaction = await prepareWalletSellerPropose(body.quantity, body.price, body.buyerChoice);
+      const transaction = await prepareWalletSellerPropose(
+        body.quantity,
+        body.price,
+        body.buyerChoice,
+        body.settlementMode,
+        body.settlementDelayMinutes,
+      );
       return NextResponse.json({ transaction });
     }
     if (body.stage === "complete") {

@@ -6,7 +6,11 @@ import {
   Client,
   Hbar,
   PrivateKey,
+  PublicKey,
+  ScheduleCreateTransaction,
+  ScheduleDeleteTransaction,
   ScheduleSignTransaction,
+  Timestamp,
   TokenAssociateTransaction,
   TokenCreateTransaction,
   TokenGrantKycTransaction,
@@ -15,9 +19,15 @@ import {
   TransactionReceiptQuery,
   TransferTransaction,
 } from "@hiero-ledger/sdk";
+import { GENESIS_HASH, createAuditTopic, publishAuditEvent } from "~~/services/hedera/audit";
 import { getOperatorClient } from "~~/services/hedera/client";
 import { formatBaseUnits, toBaseUnits } from "~~/services/hedera/format";
-import { fetchPartyBalances, waitForMirrorIndexing } from "~~/services/hedera/mirror";
+import {
+  fetchAccountPublicKey,
+  fetchPartyBalances,
+  fetchScheduleInfo,
+  waitForMirrorIndexing,
+} from "~~/services/hedera/mirror";
 import type { SetupStepId } from "~~/services/hedera/setupSteps";
 import {
   BuyerChoice,
@@ -25,7 +35,10 @@ import {
   Market,
   PAYMENT_DECIMALS,
   SECURITY_DECIMALS,
+  SettlementMode,
+  Trade,
   WalletRole,
+  findTrade,
   getMarket,
   requireMarket,
   setMarket,
@@ -33,13 +46,14 @@ import {
 import {
   BUYER_INITIAL_PAYMENT,
   type MarketSnapshot,
+  ON_SIGNATURE_EXPIRY_MINUTES,
   type PartySnapshot,
   SELLER_INITIAL_SECURITY,
 } from "~~/services/hedera/types";
 
 // Hedera refuses a schedule whose body matches one that still exists (executed schedules
 // linger until expiry), so an identical repeat trade needs a distinct memo.
-const tradeMemo = () => `DvP trade ${Date.now()}`;
+const tradeMemo = () => `DvP trade ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 // The operator pays every fee; demo accounts only co-sign, so they need almost no HBAR.
 const DEMO_ACCOUNT_OPENING_BALANCE = new Hbar(1);
 
@@ -66,23 +80,27 @@ async function buildSnapshot(market: Market): Promise<MarketSnapshot> {
   return {
     securityTokenId: market.securityTokenId,
     paymentTokenId: market.paymentTokenId,
+    auditTopicId: market.auditTopicId,
     seller,
     buyer,
     unverifiedBuyer,
     walletSeller,
     walletBuyer,
-    trade: market.trade
-      ? {
-          scheduleId: market.trade.scheduleId,
-          status: market.trade.status,
-          settlementResult: market.trade.settlementResult,
-          quantity: market.trade.quantity,
-          price: market.trade.price,
-          buyerChoice: market.trade.buyerChoice,
-          sellerIsWallet: market.trade.sellerIsWallet,
-          buyerIsWallet: market.trade.buyerIsWallet,
-        }
-      : null,
+    // Newest first, per the trades list.
+    trades: [...market.trades].reverse().map(t => ({
+      scheduleId: t.scheduleId,
+      status: t.status,
+      settlementResult: t.settlementResult,
+      quantity: t.quantity,
+      price: t.price,
+      buyerChoice: t.buyerChoice,
+      sellerIsWallet: t.sellerIsWallet,
+      buyerIsWallet: t.buyerIsWallet,
+      settlementMode: t.settlementMode,
+      expiresAt: t.expiresAt,
+      settlesAt: t.settlesAt,
+      proposedAt: t.proposedAt,
+    })),
   };
 }
 
@@ -167,7 +185,6 @@ async function grantSecurityKyc(client: Client, securityTokenId: string, account
   await response.getReceipt(client);
 }
 
-/** Creates fresh demo accounts and tokens, and resets the page to them. */
 /**
  * Runs each setup step in order, reporting it to `onStep` as it starts and finishes so the page
  * can show progress. `detail` carries the ids a step created.
@@ -230,15 +247,24 @@ export async function setupMarket(
       await waitForMirrorIndexing(fundingResponse.transactionId.toString());
     });
 
+    const auditTopicId = await step(
+      "topic",
+      () => createAuditTopic(client),
+      id => id,
+    );
+
     const market: Market = {
       securityTokenId,
       paymentTokenId,
+      auditTopicId,
+      auditPrevHash: GENESIS_HASH,
+      auditQueue: Promise.resolve(),
       seller,
       buyer,
       unverifiedBuyer,
       walletSeller: null,
       walletBuyer: null,
-      trade: null,
+      trades: [],
       pendingWalletProposal: null,
     };
     setMarket(market);
@@ -273,6 +299,52 @@ function buildTransferTransaction(
     .setTransactionMemo("DvP settlement");
 }
 
+type Timing = { expiresAt: Date; settlesAt: Date | null };
+
+/**
+ * A trade settling on the Buyer's signature expires 30 minutes after it is proposed; a trade
+ * settling at a set time expires (and is scheduled to execute) at that time instead.
+ */
+function computeTiming(settlementMode: SettlementMode, settlementDelayMinutes?: number): Timing {
+  if (settlementMode === "atTime") {
+    if (
+      settlementDelayMinutes == null ||
+      !Number.isInteger(settlementDelayMinutes) ||
+      settlementDelayMinutes < 1 ||
+      settlementDelayMinutes > 60
+    ) {
+      throw new Error("Settlement delay must be a whole number of minutes from 1 to 60.");
+    }
+    const at = new Date(Date.now() + settlementDelayMinutes * 60_000);
+    return { expiresAt: at, settlesAt: at };
+  }
+  return { expiresAt: new Date(Date.now() + ON_SIGNATURE_EXPIRY_MINUTES * 60_000), settlesAt: null };
+}
+
+/** Builds the (unfrozen) schedule-create transaction shared by the demo and wallet Seller flows. */
+function scheduleCreateTx(
+  market: Market,
+  sellerAccountId: string,
+  buyerAccountId: string,
+  quantity: number,
+  price: number,
+  adminKey: PublicKey,
+  timing: Timing,
+): ScheduleCreateTransaction {
+  return buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
+    .schedule()
+    .setScheduleMemo(tradeMemo())
+    .setAdminKey(adminKey)
+    .setExpirationTime(Timestamp.fromDate(timing.expiresAt))
+    .setWaitForExpiry(timing.settlesAt != null);
+}
+
+/** Fetches a wallet account's public key from the mirror node, as a `PublicKey` ready to use as a schedule's admin key. */
+async function fetchWalletPublicKey(accountId: string): Promise<PublicKey> {
+  const { type, key } = await fetchAccountPublicKey(accountId);
+  return type === "ED25519" ? PublicKey.fromStringED25519(key) : PublicKey.fromStringECDSA(key);
+}
+
 /**
  * The security has 0 decimals and the stablecoin 6, so a fractional quantity or a price below
  * one micro-unit would be silently rounded by `toBaseUnits` into a different trade than shown.
@@ -284,10 +356,8 @@ function assertValidTerms(quantity: number, price: number): void {
   }
 }
 
-function assertNoPendingTrade(market: Market): void {
-  if (market.trade && market.trade.status === "PENDING") {
-    throw new Error("A trade is already pending a signature.");
-  }
+function hasPendingOrScheduledTrade(market: Market): boolean {
+  return market.trades.some(t => t.status === "PENDING" || t.status === "SCHEDULED");
 }
 
 /** Seller (demo account) proposes and signs the scheduled two-leg transfer. */
@@ -295,11 +365,13 @@ export async function proposeTradeDemo(
   quantity: number,
   price: number,
   buyerChoice: BuyerChoice,
+  settlementMode: SettlementMode,
+  settlementDelayMinutes?: number,
 ): Promise<MarketSnapshot> {
   const market = requireMarket();
   if (market.walletSeller) throw new Error("Seller is a connected wallet; use the wallet signing flow.");
-  assertNoPendingTrade(market);
   assertValidTerms(quantity, price);
+  const timing = computeTiming(settlementMode, settlementDelayMinutes);
 
   const client = getOperatorClient();
   try {
@@ -307,10 +379,15 @@ export async function proposeTradeDemo(
     const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
     const sellerKey = PrivateKey.fromStringECDSA(market.seller.privateKey);
 
-    const scheduleTx = buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
-      .schedule()
-      .setScheduleMemo(tradeMemo())
-      .freezeWith(client);
+    const scheduleTx = scheduleCreateTx(
+      market,
+      sellerAccountId,
+      buyerAccountId,
+      quantity,
+      price,
+      sellerKey.publicKey,
+      timing,
+    ).freezeWith(client);
     const signed = await scheduleTx.sign(sellerKey);
     const response = await signed.execute(client);
     const receipt = await response.getReceipt(client);
@@ -318,17 +395,35 @@ export async function proposeTradeDemo(
       throw new Error("Schedule creation did not return a schedule id");
     }
 
-    market.trade = {
+    const trade: Trade = {
       scheduleId: receipt.scheduleId.toString(),
       scheduledTransactionId: receipt.scheduledTransactionId.toString(),
       quantity,
       price,
       buyerChoice,
+      sellerAccountId,
+      buyerAccountId,
       sellerIsWallet: false,
       buyerIsWallet: buyerChoice === "buyer" && market.walletBuyer != null,
       status: "PENDING",
       settlementResult: null,
+      settlementMode,
+      expiresAt: timing.expiresAt.toISOString(),
+      settlesAt: timing.settlesAt?.toISOString() ?? null,
+      proposedAt: new Date().toISOString(),
     };
+    market.trades.push(trade);
+
+    await publishAuditEvent(client, market, {
+      event: "proposed",
+      schedule: trade.scheduleId,
+      quantity,
+      price,
+      seller: sellerAccountId,
+      buyer: buyerAccountId,
+      tx: response.transactionId.toString(),
+      result: "SUCCESS",
+    });
 
     return await buildSnapshot(market);
   } finally {
@@ -336,11 +431,10 @@ export async function proposeTradeDemo(
   }
 }
 
-/** Buyer (demo account) signs the pending schedule, triggering execution. */
-export async function signTradeDemo(): Promise<MarketSnapshot> {
+/** Buyer (demo account) signs the pending schedule. On-signature trades execute immediately; set-time trades wait. */
+export async function signTradeDemo(scheduleId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
-  const trade = market.trade;
-  if (!trade) throw new Error("No trade has been proposed yet.");
+  const trade = findTrade(market, scheduleId);
   if (trade.status !== "PENDING") throw new Error("Trade is not pending a signature.");
   if (trade.buyerIsWallet) throw new Error("Buyer is a connected wallet; use the wallet signing flow.");
 
@@ -355,14 +449,63 @@ export async function signTradeDemo(): Promise<MarketSnapshot> {
     const response = await signed.execute(client);
     await response.getReceipt(client);
 
-    await finalizeTrade(trade, client);
+    await publishAuditEvent(client, market, {
+      event: "signed",
+      schedule: trade.scheduleId,
+      quantity: trade.quantity,
+      price: trade.price,
+      seller: trade.sellerAccountId,
+      buyer: trade.buyerAccountId,
+      tx: response.transactionId.toString(),
+      result: "SUCCESS",
+    });
+
+    if (trade.settlementMode === "onSignature") await finalizeTrade(trade, client, market);
+    else trade.status = "SCHEDULED";
+
     return await buildSnapshot(market);
   } finally {
     client.close();
   }
 }
 
-async function finalizeTrade(trade: NonNullable<Market["trade"]>, client: Client): Promise<void> {
+/** The Seller (demo account) cancels a trade that has not yet executed, expired or been cancelled. */
+export async function cancelTradeDemo(scheduleId: string): Promise<MarketSnapshot> {
+  const market = requireMarket();
+  const trade = findTrade(market, scheduleId);
+  if (trade.sellerIsWallet) throw new Error("Seller is a connected wallet; use the wallet signing flow.");
+  if (trade.status !== "PENDING" && trade.status !== "SCHEDULED") throw new Error("Trade can no longer be cancelled.");
+
+  const client = getOperatorClient();
+  try {
+    const sellerKey = PrivateKey.fromStringECDSA(market.seller.privateKey);
+    const tx = new ScheduleDeleteTransaction().setScheduleId(trade.scheduleId).freezeWith(client);
+    const signed = await tx.sign(sellerKey);
+    const response = await signed.execute(client);
+    await response.getReceipt(client);
+
+    trade.status = "CANCELLED";
+    await publishAuditEvent(client, market, {
+      event: "cancelled",
+      schedule: trade.scheduleId,
+      quantity: trade.quantity,
+      price: trade.price,
+      seller: trade.sellerAccountId,
+      buyer: trade.buyerAccountId,
+      tx: response.transactionId.toString(),
+      result: "SUCCESS",
+    });
+    return await buildSnapshot(market);
+  } finally {
+    client.close();
+  }
+}
+
+/**
+ * Settles the result of a schedule's execution (whether triggered by this process's own sign
+ * call, or discovered later by the reconciler for a set-time trade).
+ */
+async function finalizeTrade(trade: Trade, client: Client, market: Market): Promise<void> {
   const settleReceipt = await new TransactionReceiptQuery()
     .setTransactionId(trade.scheduledTransactionId)
     .setValidateStatus(false)
@@ -373,28 +516,126 @@ async function finalizeTrade(trade: NonNullable<Market["trade"]>, client: Client
   // Even on REJECTED no balance moved, but the schedule's execution is itself a mirror-indexed
   // transaction; waiting for it keeps the snapshot we're about to build from going stale.
   await waitForMirrorIndexing(trade.scheduledTransactionId);
+  await publishAuditEvent(client, market, {
+    event: trade.status === "SETTLED" ? "settled" : "rejected",
+    schedule: trade.scheduleId,
+    quantity: trade.quantity,
+    price: trade.price,
+    seller: trade.sellerAccountId,
+    buyer: trade.buyerAccountId,
+    tx: trade.scheduledTransactionId,
+    result: resultCode,
+  });
 }
+
+/**
+ * Catches up a trade with what the network has done to its schedule since it was last checked: a
+ * set-time execution, or an expiry past its deadline without every signature. Settlement by the
+ * Buyer's explicit sign call is handled inline by `signTradeDemo`/`completeWalletBuyerSign`
+ * instead; this only needs to notice what happens on its own.
+ */
+async function reconcileTrade(market: Market, trade: Trade, client: Client): Promise<void> {
+  if (trade.status !== "PENDING" && trade.status !== "SCHEDULED") return;
+  const info = await fetchScheduleInfo(trade.scheduleId);
+  if (!info) return;
+
+  if (info.executedTimestamp) {
+    await finalizeTrade(trade, client, market);
+    return;
+  }
+  if (info.deleted) {
+    // Normally set directly by the cancel flow; this is just a safety net against a missed update.
+    trade.status = "CANCELLED";
+    return;
+  }
+  if (Date.now() > new Date(trade.expiresAt).getTime()) {
+    trade.status = "EXPIRED";
+    await publishAuditEvent(client, market, {
+      event: "expired",
+      schedule: trade.scheduleId,
+      quantity: trade.quantity,
+      price: trade.price,
+      seller: trade.sellerAccountId,
+      buyer: trade.buyerAccountId,
+      tx: null,
+      result: null,
+    });
+  }
+}
+
+const RECONCILE_INTERVAL_MS = 4000;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __dvpReconciler: ReturnType<typeof setInterval> | undefined;
+}
+
+async function reconcileMarket(): Promise<void> {
+  const market = getMarket();
+  if (!market) return;
+  const unsettled = market.trades.filter(t => t.status === "PENDING" || t.status === "SCHEDULED");
+  if (unsettled.length === 0) return;
+
+  const client = getOperatorClient();
+  try {
+    for (const trade of unsettled) {
+      try {
+        await reconcileTrade(market, trade, client);
+      } catch (e) {
+        console.error("[dvp reconciler]", trade.scheduleId, e);
+      }
+    }
+  } finally {
+    client.close();
+  }
+}
+
+/**
+ * Starts the background loop that notices set-time settlements and expiries on its own, without
+ * depending on a user pressing anything. Idempotent across hot reloads via a `globalThis` guard,
+ * same trick as the market store itself.
+ */
+function ensureReconciler(): void {
+  if (globalThis.__dvpReconciler) return;
+  globalThis.__dvpReconciler = setInterval(() => void reconcileMarket(), RECONCILE_INTERVAL_MS);
+}
+ensureReconciler();
 
 /** Builds the unsigned, wallet-payer ScheduleCreateTransaction for a HashPack seller to sign and submit. */
 export async function prepareWalletSellerPropose(
   quantity: number,
   price: number,
   buyerChoice: BuyerChoice,
+  settlementMode: SettlementMode,
+  settlementDelayMinutes?: number,
 ): Promise<string> {
   const market = requireMarket();
   if (!market.walletSeller) throw new Error("No wallet is onboarded as Seller.");
-  assertNoPendingTrade(market);
   assertValidTerms(quantity, price);
+  const timing = computeTiming(settlementMode, settlementDelayMinutes);
 
   const client = getOperatorClient();
   try {
     const sellerAccountId = market.walletSeller.accountId;
-    market.pendingWalletProposal = { quantity, price, buyerChoice };
+    market.pendingWalletProposal = {
+      quantity,
+      price,
+      buyerChoice,
+      settlementMode,
+      settlementDelayMinutes: settlementDelayMinutes ?? 0,
+    };
     const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
+    const sellerPublicKey = await fetchWalletPublicKey(sellerAccountId);
 
-    const scheduleTx = buildTransferTransaction(market, sellerAccountId, buyerAccountId, quantity, price)
-      .schedule()
-      .setScheduleMemo(tradeMemo())
+    const scheduleTx = scheduleCreateTx(
+      market,
+      sellerAccountId,
+      buyerAccountId,
+      quantity,
+      price,
+      sellerPublicKey,
+      timing,
+    )
       .setTransactionId(TransactionId.generate(sellerAccountId))
       .freezeWith(client);
 
@@ -408,13 +649,12 @@ export async function prepareWalletSellerPropose(
 export async function completeWalletSellerPropose(transactionId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
   if (!market.walletSeller) throw new Error("No wallet is onboarded as Seller.");
-  assertNoPendingTrade(market);
   const terms = market.pendingWalletProposal;
   if (!terms) throw new Error("No proposal was prepared for the wallet Seller.");
   if (!transactionId.startsWith(`${market.walletSeller.accountId}@`)) {
     throw new Error("That transaction was not submitted by the onboarded Seller wallet.");
   }
-  const { quantity, price, buyerChoice } = terms;
+  const { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes } = terms;
 
   const client = getOperatorClient();
   try {
@@ -423,18 +663,40 @@ export async function completeWalletSellerPropose(transactionId: string): Promis
       throw new Error("Schedule creation did not return a schedule id");
     }
 
-    market.trade = {
+    const sellerAccountId = market.walletSeller.accountId;
+    const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
+    const timing = computeTiming(settlementMode, settlementDelayMinutes);
+
+    const trade: Trade = {
       scheduleId: receipt.scheduleId.toString(),
       scheduledTransactionId: receipt.scheduledTransactionId.toString(),
       quantity,
       price,
       buyerChoice,
+      sellerAccountId,
+      buyerAccountId,
       sellerIsWallet: true,
       buyerIsWallet: buyerChoice === "buyer" && market.walletBuyer != null,
       status: "PENDING",
       settlementResult: null,
+      settlementMode,
+      expiresAt: timing.expiresAt.toISOString(),
+      settlesAt: timing.settlesAt?.toISOString() ?? null,
+      proposedAt: new Date().toISOString(),
     };
+    market.trades.push(trade);
     market.pendingWalletProposal = null;
+
+    await publishAuditEvent(client, market, {
+      event: "proposed",
+      schedule: trade.scheduleId,
+      quantity,
+      price,
+      seller: sellerAccountId,
+      buyer: buyerAccountId,
+      tx: transactionId,
+      result: "SUCCESS",
+    });
 
     return await buildSnapshot(market);
   } finally {
@@ -443,10 +705,9 @@ export async function completeWalletSellerPropose(transactionId: string): Promis
 }
 
 /** Builds the unsigned, wallet-payer ScheduleSignTransaction for a HashPack buyer to sign and submit. */
-export async function prepareWalletBuyerSign(): Promise<string> {
+export async function prepareWalletBuyerSign(scheduleId: string): Promise<string> {
   const market = requireMarket();
-  const trade = market.trade;
-  if (!trade) throw new Error("No trade has been proposed yet.");
+  const trade = findTrade(market, scheduleId);
   if (!market.walletBuyer) throw new Error("No wallet is onboarded as Buyer.");
   if (trade.status !== "PENDING") throw new Error("Trade is not pending a signature.");
   if (!trade.buyerIsWallet) throw new Error("This trade's buyer is a demo account, not your wallet.");
@@ -463,18 +724,79 @@ export async function prepareWalletBuyerSign(): Promise<string> {
   }
 }
 
-/** Reads back the settlement result after a HashPack buyer signed the schedule. */
-export async function completeWalletBuyerSign(transactionId: string): Promise<MarketSnapshot> {
+/** Reads back the result after a HashPack buyer signed the schedule, settling on-signature trades right away. */
+export async function completeWalletBuyerSign(scheduleId: string, transactionId: string): Promise<MarketSnapshot> {
   const market = requireMarket();
-  const trade = market.trade;
-  if (!trade) throw new Error("No trade has been proposed yet.");
+  const trade = findTrade(market, scheduleId);
   if (trade.status !== "PENDING" || !trade.buyerIsWallet) throw new Error("No trade is waiting for your signature.");
 
   const client = getOperatorClient();
   try {
     // Throws with the network's status if HashPack's ScheduleSign itself failed.
     await new TransactionReceiptQuery().setTransactionId(transactionId).execute(client);
-    await finalizeTrade(trade, client);
+
+    await publishAuditEvent(client, market, {
+      event: "signed",
+      schedule: trade.scheduleId,
+      quantity: trade.quantity,
+      price: trade.price,
+      seller: trade.sellerAccountId,
+      buyer: trade.buyerAccountId,
+      tx: transactionId,
+      result: "SUCCESS",
+    });
+
+    if (trade.settlementMode === "onSignature") await finalizeTrade(trade, client, market);
+    else trade.status = "SCHEDULED";
+
+    return await buildSnapshot(market);
+  } finally {
+    client.close();
+  }
+}
+
+/** Builds the unsigned, wallet-payer ScheduleDeleteTransaction for a HashPack seller to cancel their trade. */
+export async function prepareWalletSellerCancel(scheduleId: string): Promise<string> {
+  const market = requireMarket();
+  const trade = findTrade(market, scheduleId);
+  if (!market.walletSeller || !trade.sellerIsWallet) throw new Error("This trade's Seller is not a connected wallet.");
+  if (trade.status !== "PENDING" && trade.status !== "SCHEDULED") throw new Error("Trade can no longer be cancelled.");
+
+  const client = getOperatorClient();
+  try {
+    const tx = new ScheduleDeleteTransaction()
+      .setScheduleId(trade.scheduleId)
+      .setTransactionId(TransactionId.generate(market.walletSeller.accountId))
+      .freezeWith(client);
+    return transactionToBase64String(tx);
+  } finally {
+    client.close();
+  }
+}
+
+/** Records a HashPack seller's cancellation. */
+export async function completeWalletSellerCancel(scheduleId: string, transactionId: string): Promise<MarketSnapshot> {
+  const market = requireMarket();
+  const trade = findTrade(market, scheduleId);
+  if (!market.walletSeller) throw new Error("No wallet is onboarded as Seller.");
+  if (!transactionId.startsWith(`${market.walletSeller.accountId}@`)) {
+    throw new Error("That transaction was not submitted by the onboarded Seller wallet.");
+  }
+
+  const client = getOperatorClient();
+  try {
+    await new TransactionReceiptQuery().setTransactionId(transactionId).execute(client);
+    trade.status = "CANCELLED";
+    await publishAuditEvent(client, market, {
+      event: "cancelled",
+      schedule: trade.scheduleId,
+      quantity: trade.quantity,
+      price: trade.price,
+      seller: trade.sellerAccountId,
+      buyer: trade.buyerAccountId,
+      tx: transactionId,
+      result: "SUCCESS",
+    });
     return await buildSnapshot(market);
   } finally {
     client.close();
@@ -496,7 +818,7 @@ function assertNotOperator(client: Client, accountId: string): void {
 
 /**
  * Who may onboard: not the operator, not a demo party (that would, for example, hand KYC to the
- * unverified Buyer), not twice in the same role, and not while a trade is pending.
+ * unverified Buyer), not twice in the same role, and not while a trade is pending or scheduled.
  * Returns whether the account already joined in the other role, so its association is done.
  */
 function checkOnboarding(market: Market, client: Client, role: WalletRole, accountId: string): boolean {
@@ -505,7 +827,9 @@ function checkOnboarding(market: Market, client: Client, role: WalletRole, accou
   if ([market.seller, market.buyer, market.unverifiedBuyer].some(p => p.accountId === accountId)) {
     throw new Error(`${accountId} is one of the demo accounts. Connect your own HashPack account.`);
   }
-  assertNoPendingTrade(market);
+  if (hasPendingOrScheduledTrade(market)) {
+    throw new Error("A trade is pending or scheduled; it must settle, expire or be cancelled before onboarding.");
+  }
   const current = role === "seller" ? market.walletSeller : market.walletBuyer;
   if (current?.accountId === accountId) throw new Error(`${accountId} is already onboarded as ${role}.`);
   const other = role === "seller" ? market.walletBuyer : market.walletSeller;

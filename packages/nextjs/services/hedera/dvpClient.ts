@@ -3,7 +3,13 @@
  * over fetch, so this module is safe to use from any client component.
  */
 import type { SetupEvent, SetupStepId } from "~~/services/hedera/setupSteps";
-import type { BuyerChoice, MarketSnapshot, WalletRole } from "~~/services/hedera/types";
+import type {
+  AuditEntrySnapshot,
+  BuyerChoice,
+  MarketSnapshot,
+  SettlementMode,
+  WalletRole,
+} from "~~/services/hedera/types";
 
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -27,6 +33,11 @@ export async function fetchMarket(): Promise<MarketSnapshot | null> {
   const res = await fetch("/api/hedera/dvp/market");
   const data = await res.json();
   return data.market ?? null;
+}
+
+export async function fetchAuditLog(): Promise<{ entries: AuditEntrySnapshot[]; topicId: string | null }> {
+  const res = await fetch("/api/hedera/dvp/audit");
+  return res.json();
 }
 
 /** Thrown when setup fails; `step` is the step that was running, for the progress list. */
@@ -66,17 +77,30 @@ export async function setupMarket(
   }
 }
 
-export async function proposeTrade(quantity: number, price: number, buyerChoice: BuyerChoice): Promise<MarketSnapshot> {
+export async function proposeTrade(
+  quantity: number,
+  price: number,
+  buyerChoice: BuyerChoice,
+  settlementMode: SettlementMode,
+  settlementDelayMinutes?: number,
+): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade", {
     quantity,
     price,
     buyerChoice,
+    settlementMode,
+    settlementDelayMinutes,
   });
   return market;
 }
 
-export async function signTrade(): Promise<MarketSnapshot> {
-  const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/sign", {});
+export async function signTrade(scheduleId: string): Promise<MarketSnapshot> {
+  const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/sign", { scheduleId });
+  return market;
+}
+
+export async function cancelTrade(scheduleId: string): Promise<MarketSnapshot> {
+  const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/cancel", { scheduleId });
   return market;
 }
 
@@ -84,12 +108,16 @@ export async function prepareWalletSellerPropose(
   quantity: number,
   price: number,
   buyerChoice: BuyerChoice,
+  settlementMode: SettlementMode,
+  settlementDelayMinutes?: number,
 ): Promise<string> {
   const { transaction } = await postJson<{ transaction: string }>("/api/hedera/dvp/trade/wallet-seller", {
     stage: "prepare",
     quantity,
     price,
     buyerChoice,
+    settlementMode,
+    settlementDelayMinutes,
   });
   return transaction;
 }
@@ -103,16 +131,35 @@ export async function completeWalletSellerPropose(transactionId: string): Promis
   return market;
 }
 
-export async function prepareWalletBuyerSign(): Promise<string> {
+export async function prepareWalletBuyerSign(scheduleId: string): Promise<string> {
   const { transaction } = await postJson<{ transaction: string }>("/api/hedera/dvp/trade/wallet-buyer", {
     stage: "prepare",
+    scheduleId,
   });
   return transaction;
 }
 
-export async function completeWalletBuyerSign(transactionId: string): Promise<MarketSnapshot> {
+export async function completeWalletBuyerSign(scheduleId: string, transactionId: string): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/wallet-buyer", {
     stage: "complete",
+    scheduleId,
+    transactionId,
+  });
+  return market;
+}
+
+export async function prepareWalletSellerCancel(scheduleId: string): Promise<string> {
+  const { transaction } = await postJson<{ transaction: string }>("/api/hedera/dvp/trade/wallet-seller-cancel", {
+    stage: "prepare",
+    scheduleId,
+  });
+  return transaction;
+}
+
+export async function completeWalletSellerCancel(scheduleId: string, transactionId: string): Promise<MarketSnapshot> {
+  const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade/wallet-seller-cancel", {
+    stage: "complete",
+    scheduleId,
     transactionId,
   });
   return market;

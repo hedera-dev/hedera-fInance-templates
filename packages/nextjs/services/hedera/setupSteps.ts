@@ -36,6 +36,12 @@ export const SETUP_STEPS = [
     explanation:
       "One transfer gives the Seller the security to sell and both Buyers stablecoin to pay with, then waits for the mirror node to show it.",
   },
+  {
+    id: "topic",
+    label: "Create the audit topic",
+    explanation:
+      "An HCS topic, submit key held by you, that every trade's lifecycle gets published to — proposed, signed, settled, rejected, cancelled and expired.",
+  },
 ] as const;
 
 export type SetupStepId = (typeof SETUP_STEPS)[number]["id"];
