@@ -1,6 +1,6 @@
 {
-  "name": "dvp-settlement",
-  "description": "Settle a trade delivery-versus-payment on Hedera: a security leg and a stablecoin leg in one scheduled native transfer. No contracts.",
+  "name": "ats-bond",
+  "description": "Issue an ERC-1400 bond through the Asset Tokenization Studio testnet factory, approve investors on an allowlist, and distribute it. No contracts to deploy.",
   "create-scaffold-hbar": {
     "capabilities": {
       "frontend": [

@@ -1,14 +1,14 @@
-# dvp-settlement
+# ats-bond
 
-Settle a trade delivery-versus-payment on Hedera: the security leg and the stablecoin leg move in one scheduled native `TransferTransaction`, or neither moves. No smart contracts.
+Issue a tokenised bond through Hedera's Asset Tokenization Studio (ATS) testnet factory, approve the investors allowed to hold it, and distribute it to them. ATS deploys the bond from contracts already on testnet: you deploy nothing.
 
-Paired with the Hedera docs page **Solutions → Finance Workflows → Settle a trade delivery-versus-payment in one atomic transfer**.
+Paired with the Hedera docs page **Solutions → Finance Workflows → Issue a tokenised bond with Asset Tokenization Studio**.
 
 ```bash
-npx create-scaffold-hbar@latest --template web3buidlerz/hedera-finance-templates#templates/dvp-settlement
+npx create-scaffold-hbar@latest --template web3buidlerz/hedera-finance-templates#templates/ats-bond
 ```
 
-> Work in progress: this branch is the Next.js starter the DvP app is being built on.
+> Work in progress: this branch is the Next.js starter the bond app is being built on.
 
 ```bash
 yarn install

@@ -2,7 +2,7 @@
 
 Briefing for coding agents in this app (Cursor, Claude Code, Codex). Claude Code loads it through `CLAUDE.md`.
 
-This is a Scaffold-HBAR dApp with **no Solidity package**: Next.js App Router, wallet connect, and Hedera networks (testnet, mainnet). Hedera is reached through native services (HTS, scheduled transactions, mirror node) with `@hiero-ledger/sdk`, not smart contracts.
+This is a Scaffold-HBAR dApp with **no Solidity package**: Next.js App Router, wallet connect, and Hedera networks (testnet, mainnet). This app deploys no contracts of its own: it calls the Asset Tokenization Studio (ATS) contracts already deployed on Hedera testnet, over JSON-RPC with `viem` (already a dependency), and reads Hedera state from the mirror node.
 
 Use the package manager this project was created with (`packageManager` in the root `package.json`, or the lockfile). Examples use `yarn`; if the app was created with npm, swap `yarn <script>` for `npm run <script>`.
 
