@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { hederaTestnet } from "viem/chains";
+import { useReadContract } from "wagmi";
 import type { BondData } from "~~/hooks/coupons/useBond";
 import { useMirrorAccount } from "~~/hooks/coupons/useMirrorAccount";
 import type { DemoInvestor, Stablecoin } from "~~/services/coupons/state";
+import { couponBondAbi } from "~~/utils/coupons/abi";
 import { HBAR_RESERVE_PER_COUPON } from "~~/utils/coupons/constants";
 import { getBlockExplorerAddressLink } from "~~/utils/scaffold-hbar";
 
@@ -38,7 +40,22 @@ function InvestorRow({
   const [isAllocating, setIsAllocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The units actually allocated on-chain so far, for display once allocation is locked in
+  // (bond running/matured/stopped) rather than the form's pre-fill default.
+  const allocated = useReadContract({
+    address: bondAddress,
+    abi: couponBondAbi,
+    functionName: "unitsOf",
+    args: [row.evmAddress],
+    query: { enabled: Boolean(bondAddress), refetchInterval: 4000 },
+  });
+
   const canAllocate = bondAddress && bondStatus === "CREATED";
+
+  // Keeps the input showing the holder's current on-chain allocation while it can still change.
+  useEffect(() => {
+    if (canAllocate && allocated.data !== undefined) setUnits(Number(allocated.data));
+  }, [canAllocate, allocated.data]);
 
   const handleAllocate = async () => {
     if (!bondAddress) return;
@@ -53,6 +70,7 @@ function InvestorRow({
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to allocate");
       onAllocated();
+      allocated.refetch();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to allocate");
     } finally {
@@ -111,7 +129,9 @@ function InvestorRow({
           </button>
         </div>
       ) : (
-        <p className="text-xs text-base-content/60 m-0">Allocated units: {row.defaultUnits}</p>
+        <p className="text-xs text-base-content/60 m-0">
+          Allocated units: {allocated.data !== undefined ? Number(allocated.data) : row.defaultUnits}
+        </p>
       )}
       {error && <p className="text-xs text-error m-0">{error}</p>}
     </div>
