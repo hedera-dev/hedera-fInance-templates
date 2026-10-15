@@ -61,24 +61,26 @@ const Home: NextPage = () => {
           />
 
           {status?.bond ? (
-            <>
-              <InvestorsCard
-                investors={status.investors}
-                busyAddress={busyAddress}
-                onApprove={approveInvestor}
-                onRevoke={revokeInvestor}
-                onIssue={issueToInvestor}
-              />
-              <WalletInvestorCard
-                bondAddress={status.bond.address}
-                investors={status.investors}
-                addingWallet={addingWallet}
-                onAddWalletInvestor={addWalletInvestor}
-                onLogActivity={logActivity}
-                onTransferred={refreshStatus}
-              />
-            </>
+            <InvestorsCard
+              investors={status.investors}
+              busyAddress={busyAddress}
+              onApprove={approveInvestor}
+              onRevoke={revokeInvestor}
+              onIssue={issueToInvestor}
+            />
           ) : null}
+
+          {/* Always rendered: #wallet-state must say what to do next (connect, switch network,
+              add the wallet, wait for approval, transfer) from the very first page load, before
+              any bond has been issued. */}
+          <WalletInvestorCard
+            bondAddress={status?.bond?.address ?? null}
+            investors={status?.investors ?? []}
+            addingWallet={addingWallet}
+            onAddWalletInvestor={addWalletInvestor}
+            onLogActivity={logActivity}
+            onTransferred={refreshStatus}
+          />
         </div>
 
         <div className="flex flex-col gap-6" ref={bondSectionRef}>
