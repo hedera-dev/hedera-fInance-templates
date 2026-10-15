@@ -1,0 +1,40 @@
+{
+  "name": "bond-coupons",
+  "description": "A bond contract that pays its own coupons in an HTS stablecoin and schedules the next one itself through HIP-1215, then repays principal at maturity.",
+  "create-scaffold-hbar": {
+    "capabilities": {
+      "frontend": [
+        "nextjs-app"
+      ],
+      "solidityFramework": [
+        "foundry"
+      ],
+      "packageManager": [
+        "yarn",
+        "npm"
+      ]
+    },
+    "defaults": {
+      "frontend": "nextjs-app",
+      "solidityFramework": "foundry",
+      "packageManager": "yarn"
+    },
+    "outro": {
+      "sections": [
+        {
+          "title": "Next steps",
+          "steps": [
+            {
+              "label": "Deploy the coupon bond factory to testnet (once)",
+              "command": "yarn coupons:deploy"
+            },
+            {
+              "label": "Start the frontend",
+              "command": "{run:next:dev}"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

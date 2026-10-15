@@ -1,0 +1,8 @@
+# Root scripts delegate to the workspaces; contracts live in packages/foundry.
+install: yarn install
+build: yarn next:build
+# forge test against the mocked schedule service (no network).
+test: yarn foundry:test
+# Deploy the coupon bond factory to testnet if deployedContracts.ts has none, then serve.
+# Both inherit HEDERA_OPERATOR_ID/KEY from the harness.
+serve: yarn coupons:deploy && yarn next:dev
