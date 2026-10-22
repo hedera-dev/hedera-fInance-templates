@@ -96,13 +96,15 @@ const Home: NextPage = () => {
     setBusyPropose(true);
     try {
       const delay = settlementMode === "atTime" ? settlementDelay : undefined;
-      const next = market?.walletSeller
+      const useWalletSeller = signingMode === "hashpack" && market?.walletSeller != null;
+      const useWalletBuyer = signingMode === "hashpack" && buyerChoice === "buyer" && market?.walletBuyer != null;
+      const next = useWalletSeller
         ? await dvp.completeWalletSellerPropose(
             await wallet.signAndExecute(
               await dvp.prepareWalletSellerPropose(quantity, price, buyerChoice, settlementMode, delay),
             ),
           )
-        : await dvp.proposeTrade(quantity, price, buyerChoice, settlementMode, delay);
+        : await dvp.proposeTrade(quantity, price, buyerChoice, settlementMode, delay, useWalletBuyer);
       setMarket(next);
       notification.success("Trade proposed. Waiting for the Buyer to sign.");
     } catch (e) {
@@ -110,7 +112,17 @@ const Home: NextPage = () => {
     } finally {
       setBusyPropose(false);
     }
-  }, [market?.walletSeller, quantity, price, buyerChoice, settlementMode, settlementDelay, wallet]);
+  }, [
+    market?.walletSeller,
+    market?.walletBuyer,
+    quantity,
+    price,
+    buyerChoice,
+    settlementMode,
+    settlementDelay,
+    signingMode,
+    wallet,
+  ]);
 
   const handleSign = useCallback(
     async (trade: TradeSnapshot) => {
@@ -162,8 +174,8 @@ const Home: NextPage = () => {
     try {
       // No transaction when the wallet already associated both tokens in its other role.
       const association = await dvp.prepareOnboardWallet(walletRole, wallet.accountId);
-      if (association) await wallet.signAndExecute(association);
-      setMarket(await dvp.completeOnboardWallet(walletRole, wallet.accountId));
+      const transactionId = association ? await wallet.signAndExecute(association) : null;
+      setMarket(await dvp.completeOnboardWallet(walletRole, wallet.accountId, transactionId));
       notification.success("Wallet onboarded.");
     } catch (e) {
       notification.error(errorMessage(e));
@@ -191,7 +203,8 @@ const Home: NextPage = () => {
 
   const walletBlocksAction = signingMode === "hashpack" && !wallet.isConnected;
   // Wallet transactions are built with the onboarded account as payer, so HashPack must be on that account.
-  const sellerWalletMismatch = market?.walletSeller != null && wallet.accountId !== market.walletSeller.accountId;
+  const sellerWalletMismatch =
+    signingMode === "hashpack" && market?.walletSeller != null && wallet.accountId !== market.walletSeller.accountId;
   const validDelay = Number.isInteger(settlementDelay) && settlementDelay >= 1 && settlementDelay <= 60;
 
   const proposeDisabled =
@@ -205,19 +218,27 @@ const Home: NextPage = () => {
   const canSign = useCallback(
     (trade: TradeSnapshot) => {
       if (trade.status !== "PENDING" || walletBlocksAction) return false;
-      if (trade.buyerIsWallet) return wallet.accountId !== "" && wallet.accountId === market?.walletBuyer?.accountId;
+      if (trade.buyerIsWallet) {
+        return (
+          signingMode === "hashpack" && wallet.accountId !== "" && wallet.accountId === market?.walletBuyer?.accountId
+        );
+      }
       return true;
     },
-    [walletBlocksAction, wallet.accountId, market?.walletBuyer?.accountId],
+    [walletBlocksAction, wallet.accountId, market?.walletBuyer?.accountId, signingMode],
   );
 
   const canCancel = useCallback(
     (trade: TradeSnapshot) => {
       if ((trade.status !== "PENDING" && trade.status !== "SCHEDULED") || walletBlocksAction) return false;
-      if (trade.sellerIsWallet) return wallet.accountId !== "" && wallet.accountId === market?.walletSeller?.accountId;
+      if (trade.sellerIsWallet) {
+        return (
+          signingMode === "hashpack" && wallet.accountId !== "" && wallet.accountId === market?.walletSeller?.accountId
+        );
+      }
       return true;
     },
-    [walletBlocksAction, wallet.accountId, market?.walletSeller?.accountId],
+    [walletBlocksAction, wallet.accountId, market?.walletSeller?.accountId, signingMode],
   );
 
   const yourTurnTrade = useMemo(

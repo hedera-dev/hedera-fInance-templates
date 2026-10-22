@@ -3,6 +3,7 @@
  * here and must never be serialized into an API response. Surviving a
  * server restart is explicitly not required.
  */
+import type { PendingAuditEvent } from "~~/services/hedera/audit";
 import type { BuyerChoice, SettlementMode, TradeStatus, WalletRole } from "~~/services/hedera/types";
 
 export type { BuyerChoice, SettlementMode, TradeStatus, WalletRole };
@@ -16,6 +17,46 @@ export type DemoParty = {
 export type WalletParty = {
   accountId: string;
 };
+
+export type PendingWalletAction =
+  | {
+      type: "onboard";
+      role: WalletRole;
+      accountId: string;
+      associationVerified?: boolean;
+      kycGranted?: boolean;
+      minted?: boolean;
+      funded?: boolean;
+      transactionBase64?: string;
+      mintTransactionId?: string;
+      fundingTransactionId?: string;
+      processing?: boolean;
+    }
+  | {
+      type: "propose";
+      quantity: number;
+      price: number;
+      buyerChoice: BuyerChoice;
+      settlementMode: SettlementMode;
+      sellerAccountId: string;
+      buyerAccountId: string;
+      buyerIsWallet: boolean;
+      expiresAt: string;
+      settlesAt: string | null;
+      processing?: boolean;
+    }
+  | {
+      type: "sign";
+      scheduleId: string;
+      accountId: string;
+      processing?: boolean;
+    }
+  | {
+      type: "cancel";
+      scheduleId: string;
+      accountId: string;
+      processing?: boolean;
+    };
 
 export type Trade = {
   scheduleId: string;
@@ -50,6 +91,8 @@ export type Market = {
   auditPrevHash: string;
   /** Serializes audit publishes so the `prev` hash chain never races itself. */
   auditQueue: Promise<void>;
+  /** Entries waiting for HCS. Retried by the reconciler until they are published in order. */
+  pendingAuditEvents: PendingAuditEvent[];
   seller: DemoParty;
   buyer: DemoParty;
   unverifiedBuyer: DemoParty;
@@ -57,14 +100,8 @@ export type Market = {
   walletBuyer: WalletParty | null;
   /** Every trade of this market, oldest first. */
   trades: Trade[];
-  /** Terms the server prepared for a HashPack seller to sign; `complete` records these, never the client's. */
-  pendingWalletProposal: {
-    quantity: number;
-    price: number;
-    buyerChoice: BuyerChoice;
-    settlementMode: SettlementMode;
-    settlementDelayMinutes: number;
-  } | null;
+  /** Server-prepared wallet actions, keyed by their exact Hedera transaction id. */
+  pendingWalletActions: Record<string, PendingWalletAction>;
 };
 
 declare global {

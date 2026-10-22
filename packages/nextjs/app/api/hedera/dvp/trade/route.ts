@@ -9,10 +9,12 @@ type ProposeBody = {
   buyerChoice: BuyerChoice;
   settlementMode: SettlementMode;
   settlementDelayMinutes?: number;
+  useWalletBuyer?: boolean;
 };
 
 function parseProposeBody(body: unknown): ProposeBody {
-  const { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes } = (body ?? {}) as Partial<ProposeBody>;
+  const { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes, useWalletBuyer } = (body ??
+    {}) as Partial<ProposeBody>;
   if (typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0) {
     throw new Error("quantity must be a positive number");
   }
@@ -28,14 +30,26 @@ function parseProposeBody(body: unknown): ProposeBody {
   if (settlementMode === "atTime" && typeof settlementDelayMinutes !== "number") {
     throw new Error("settlementDelayMinutes is required when settlementMode is atTime");
   }
-  return { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes };
+  if (useWalletBuyer != null && typeof useWalletBuyer !== "boolean") {
+    throw new Error("useWalletBuyer must be a boolean");
+  }
+  return { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes, useWalletBuyer };
 }
 
 /** Seller (demo account) proposes and signs the two-leg scheduled transfer. */
 export async function POST(req: Request) {
   try {
-    const { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes } = parseProposeBody(await req.json());
-    const market = await proposeTradeDemo(quantity, price, buyerChoice, settlementMode, settlementDelayMinutes);
+    const { quantity, price, buyerChoice, settlementMode, settlementDelayMinutes, useWalletBuyer } = parseProposeBody(
+      await req.json(),
+    );
+    const market = await proposeTradeDemo(
+      quantity,
+      price,
+      buyerChoice,
+      settlementMode,
+      settlementDelayMinutes,
+      useWalletBuyer === true,
+    );
     return NextResponse.json({ market });
   } catch (e) {
     return errorResponse(e);

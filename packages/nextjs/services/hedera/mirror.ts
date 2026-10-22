@@ -6,7 +6,7 @@
 
 const MIRROR_BASE = process.env.HEDERA_MIRROR_TESTNET_URL ?? "https://testnet.mirrornode.hedera.com";
 
-type TokenBalancesResponse = { tokens?: { balance: number | string }[] };
+type TokenBalancesResponse = { tokens?: { token_id?: string; balance: number | string }[] };
 
 async function fetchTokenBalance(accountId: string, tokenId: string): Promise<bigint> {
   const url = `${MIRROR_BASE}/api/v1/accounts/${accountId}/tokens?token.id=${tokenId}`;
@@ -34,6 +34,30 @@ export async function fetchPartyBalances(
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Waits until the mirror node confirms that an account is associated with every token. */
+export async function waitForTokenAssociations(
+  accountId: string,
+  tokenIds: string[],
+  maxAttempts = 8,
+  delayMs = 1000,
+): Promise<void> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const associated = await Promise.all(
+      tokenIds.map(async tokenId => {
+        const res = await fetch(`${MIRROR_BASE}/api/v1/accounts/${accountId}/tokens?token.id=${tokenId}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as TokenBalancesResponse;
+        return data.tokens?.some(token => token.token_id === tokenId) ?? false;
+      }),
+    );
+    if (associated.every(Boolean)) return;
+    await sleep(delayMs);
+  }
+  throw new Error(`Mirror node did not confirm token association for ${accountId}.`);
 }
 
 /**

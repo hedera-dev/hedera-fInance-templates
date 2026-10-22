@@ -20,7 +20,11 @@ export function toBaseUnits(wholeUnits: number, decimals: number): bigint {
   if (!Number.isFinite(wholeUnits) || wholeUnits < 0) {
     throw new Error("Amount must be a non-negative finite number");
   }
-  // Round to the token's decimals before scaling, so 10000 * 10^6 stays exact.
-  const scaled = Math.round(wholeUnits * 10 ** decimals);
-  return BigInt(scaled);
+  const value = wholeUnits.toString();
+  if (!/^\d+(?:\.\d+)?$/.test(value)) throw new Error("Amount must use plain decimal notation");
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length > decimals) throw new Error(`Amount must have at most ${decimals} decimals`);
+  const scaled = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0");
+  if (scaled > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Amount is too large to represent safely");
+  return scaled;
 }

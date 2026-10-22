@@ -3,7 +3,13 @@
  * previous entry's exact message bytes so the log can be verified independently from the mirror
  * node, without trusting this server.
  */
-import { Client, TopicCreateTransaction, TopicMessageSubmitTransaction } from "@hiero-ledger/sdk";
+import {
+  Client,
+  TopicCreateTransaction,
+  TopicMessageSubmitTransaction,
+  TransactionId,
+  TransactionReceiptQuery,
+} from "@hiero-ledger/sdk";
 import { createHash } from "node:crypto";
 import { fetchTopicMessages, mirrorTimestampToIso } from "~~/services/hedera/mirror";
 import type { Market } from "~~/services/hedera/store";
@@ -26,6 +32,17 @@ type AuditMessage = {
   prev: string;
 };
 
+export type AuditFields = Omit<AuditMessage, "v" | "prev">;
+export type PendingAuditEvent = { fields: AuditFields; transactionId: string | null };
+
+function transactionIdExpired(transactionId: string): boolean {
+  const validStart = transactionId.split("@")[1]?.split("?")[0];
+  if (!validStart) return true;
+  const [seconds, nanos = "0"] = validStart.split(".");
+  const startedAt = Number(seconds) * 1000 + Number(nanos) / 1e6;
+  return !Number.isFinite(startedAt) || Date.now() - startedAt > 125_000;
+}
+
 /** Creates the market's audit topic, submit key held by the operator. */
 export async function createAuditTopic(client: Client): Promise<string> {
   const operatorKey = client.operatorPublicKey;
@@ -38,28 +55,79 @@ export async function createAuditTopic(client: Client): Promise<string> {
 }
 
 /**
- * Publishes one audit entry and advances the market's `prev` hash chain. Queued onto
- * `market.auditQueue` by every caller so concurrent events (a sign racing the background
- * reconciler, say) never land out of order and break the chain.
+ * Flushes queued entries and advances the `prev` hash after each confirmed HCS submission.
+ * Calls serialize through `market.auditQueue`, so concurrent events stay in order.
  */
-export function publishAuditEvent(
-  client: Client,
-  market: Market,
-  fields: Omit<AuditMessage, "v" | "prev">,
-): Promise<void> {
+export function flushAuditEvents(client: Client, market: Market): Promise<void> {
   const task = market.auditQueue.then(async () => {
-    if (!market.auditTopicId) return;
-    const message: AuditMessage = { v: 1, prev: market.auditPrevHash, ...fields };
-    const bytes = Buffer.from(JSON.stringify(message), "utf8");
-    await (
-      await new TopicMessageSubmitTransaction().setTopicId(market.auditTopicId).setMessage(bytes).execute(client)
-    ).getReceipt(client);
-    market.auditPrevHash = createHash("sha256").update(bytes).digest("hex");
+    while (market.auditTopicId && market.pendingAuditEvents.length > 0) {
+      const pending = market.pendingAuditEvents[0];
+      const message: AuditMessage = { v: 1, prev: market.auditPrevHash, ...pending.fields };
+      const bytes = Buffer.from(JSON.stringify(message), "utf8");
+      const operatorId = client.operatorAccountId;
+      if (!operatorId) throw new Error("Operator account id is not available on the client");
+      const wasSubmitted = pending.transactionId != null;
+      const transactionId = pending.transactionId
+        ? TransactionId.fromString(pending.transactionId)
+        : TransactionId.generate(operatorId);
+      pending.transactionId = transactionId.toString();
+
+      let confirmed = false;
+      let failedStatus: string | null = null;
+      if (wasSubmitted) {
+        try {
+          const receipt = await new TransactionReceiptQuery()
+            .setTransactionId(transactionId)
+            .setValidateStatus(false)
+            .execute(client);
+          confirmed = receipt.status.toString() === "SUCCESS";
+          if (!confirmed) {
+            failedStatus = receipt.status.toString();
+            pending.transactionId = null;
+          }
+        } catch {
+          // Not indexed yet (or never submitted); submit the exact queued transaction below.
+          if (pending.transactionId && transactionIdExpired(pending.transactionId)) {
+            failedStatus = "TRANSACTION_EXPIRED";
+            pending.transactionId = null;
+          }
+        }
+      }
+      if (failedStatus) throw new Error(`Queued audit submission failed with ${failedStatus}; retrying with a new id.`);
+      if (!confirmed) {
+        try {
+          await (
+            await new TopicMessageSubmitTransaction()
+              .setTopicId(market.auditTopicId)
+              .setMessage(bytes)
+              .setTransactionId(transactionId)
+              .execute(client)
+          ).getReceipt(client);
+        } catch (submitError) {
+          const receipt = await new TransactionReceiptQuery()
+            .setTransactionId(transactionId)
+            .setValidateStatus(false)
+            .execute(client)
+            .catch(() => null);
+          if (receipt?.status.toString() !== "SUCCESS") throw submitError;
+        }
+      }
+      market.auditPrevHash = createHash("sha256").update(bytes).digest("hex");
+      market.pendingAuditEvents.shift();
+    }
   });
-  // Swallow so one failed publish doesn't jam the queue for every later event; the error is still
-  // visible to this call's own caller via the returned (unchained) promise below.
   market.auditQueue = task.catch(() => undefined);
   return task;
+}
+
+/** Queues an entry and tries it now; the reconciler retries it after transient HCS failures. */
+export async function publishAuditEvent(client: Client, market: Market, fields: AuditFields): Promise<void> {
+  market.pendingAuditEvents.push({ fields, transactionId: null });
+  try {
+    await flushAuditEvents(client, market);
+  } catch (error) {
+    console.error("[dvp audit] queued for retry", fields.event, fields.schedule, error);
+  }
 }
 
 /** Reads the market's audit entries from the mirror node, newest first. */

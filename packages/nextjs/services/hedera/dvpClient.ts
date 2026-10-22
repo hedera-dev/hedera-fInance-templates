@@ -83,6 +83,7 @@ export async function proposeTrade(
   buyerChoice: BuyerChoice,
   settlementMode: SettlementMode,
   settlementDelayMinutes?: number,
+  useWalletBuyer = false,
 ): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade", {
     quantity,
@@ -90,6 +91,7 @@ export async function proposeTrade(
     buyerChoice,
     settlementMode,
     settlementDelayMinutes,
+    useWalletBuyer,
   });
   return market;
 }
@@ -175,11 +177,16 @@ export async function prepareOnboardWallet(role: WalletRole, accountId: string):
   return transaction;
 }
 
-export async function completeOnboardWallet(role: WalletRole, accountId: string): Promise<MarketSnapshot> {
+export async function completeOnboardWallet(
+  role: WalletRole,
+  accountId: string,
+  transactionId: string | null,
+): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/wallet/onboard", {
     stage: "complete",
     role,
     accountId,
+    transactionId,
   });
   return market;
 }
