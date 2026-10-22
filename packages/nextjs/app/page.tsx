@@ -92,37 +92,37 @@ const Home: NextPage = () => {
     return () => clearInterval(id);
   }, []);
 
-  const handlePropose = useCallback(async () => {
-    setBusyPropose(true);
-    try {
-      const delay = settlementMode === "atTime" ? settlementDelay : undefined;
-      const useWalletSeller = signingMode === "hashpack" && market?.walletSeller != null;
-      const useWalletBuyer = signingMode === "hashpack" && buyerChoice === "buyer" && market?.walletBuyer != null;
-      const next = useWalletSeller
-        ? await dvp.completeWalletSellerPropose(
-            await wallet.signAndExecute(
-              await dvp.prepareWalletSellerPropose(quantity, price, buyerChoice, settlementMode, delay),
-            ),
-          )
-        : await dvp.proposeTrade(quantity, price, buyerChoice, settlementMode, delay, useWalletBuyer);
-      setMarket(next);
-      notification.success("Trade proposed. Waiting for the Buyer to sign.");
-    } catch (e) {
-      notification.error(errorMessage(e));
-    } finally {
-      setBusyPropose(false);
-    }
-  }, [
-    market?.walletSeller,
-    market?.walletBuyer,
-    quantity,
-    price,
-    buyerChoice,
-    settlementMode,
-    settlementDelay,
-    signingMode,
-    wallet,
-  ]);
+  useEffect(() => {
+    if (buyerChoice === "wallet" && !market?.walletBuyer) setBuyerChoice("buyer");
+  }, [buyerChoice, market?.walletBuyer]);
+
+  const handlePropose = useCallback(
+    async (seller: "demo" | "wallet") => {
+      setBusyPropose(true);
+      try {
+        const delay = settlementMode === "atTime" ? settlementDelay : undefined;
+        const next =
+          seller === "wallet"
+            ? await dvp.completeWalletSellerPropose(
+                await wallet.signAndExecute(
+                  await dvp.prepareWalletSellerPropose(quantity, price, buyerChoice, settlementMode, delay),
+                ),
+              )
+            : await dvp.proposeTrade(quantity, price, buyerChoice, settlementMode, delay);
+        setMarket(next);
+        notification.success(
+          seller === "wallet"
+            ? "Trade proposed. Your wallet signed as Seller."
+            : "Trade proposed. The demo Seller signed.",
+        );
+      } catch (e) {
+        notification.error(errorMessage(e));
+      } finally {
+        setBusyPropose(false);
+      }
+    },
+    [quantity, price, buyerChoice, settlementMode, settlementDelay, wallet],
+  );
 
   const handleSign = useCallback(
     async (trade: TradeSnapshot) => {
@@ -202,43 +202,30 @@ const Home: NextPage = () => {
       : market?.walletBuyer?.accountId === wallet.accountId;
 
   const walletBlocksAction = signingMode === "hashpack" && !wallet.isConnected;
-  // Wallet transactions are built with the onboarded account as payer, so HashPack must be on that account.
-  const sellerWalletMismatch =
-    signingMode === "hashpack" && market?.walletSeller != null && wallet.accountId !== market.walletSeller.accountId;
   const validDelay = Number.isInteger(settlementDelay) && settlementDelay >= 1 && settlementDelay <= 60;
-
-  const proposeDisabled =
-    busyPropose ||
-    !market ||
-    sellerWalletMismatch ||
-    walletBlocksAction ||
-    (settlementMode === "atTime" && !validDelay);
+  const delayInvalid = settlementMode === "atTime" && !validDelay;
+  const demoProposeDisabled =
+    busyPropose || !market || delayInvalid || (buyerChoice === "wallet" && !market.walletBuyer);
+  const walletSellerReady = market?.walletSeller != null && wallet.accountId === market.walletSeller.accountId;
+  const walletProposeDisabled = demoProposeDisabled || !walletSellerReady;
   const onboardDisabled = busyOnboard || !wallet.isConfigured || !wallet.isConnected || !market || onboardedForRole;
 
   const canSign = useCallback(
     (trade: TradeSnapshot) => {
       if (trade.status !== "PENDING" || walletBlocksAction) return false;
-      if (trade.buyerIsWallet) {
-        return (
-          signingMode === "hashpack" && wallet.accountId !== "" && wallet.accountId === market?.walletBuyer?.accountId
-        );
-      }
+      if (trade.buyerIsWallet) return wallet.accountId !== "" && wallet.accountId === market?.walletBuyer?.accountId;
       return true;
     },
-    [walletBlocksAction, wallet.accountId, market?.walletBuyer?.accountId, signingMode],
+    [walletBlocksAction, wallet.accountId, market?.walletBuyer?.accountId],
   );
 
   const canCancel = useCallback(
     (trade: TradeSnapshot) => {
       if ((trade.status !== "PENDING" && trade.status !== "SCHEDULED") || walletBlocksAction) return false;
-      if (trade.sellerIsWallet) {
-        return (
-          signingMode === "hashpack" && wallet.accountId !== "" && wallet.accountId === market?.walletSeller?.accountId
-        );
-      }
+      if (trade.sellerIsWallet) return wallet.accountId !== "" && wallet.accountId === market?.walletSeller?.accountId;
       return true;
     },
-    [walletBlocksAction, wallet.accountId, market?.walletSeller?.accountId, signingMode],
+    [walletBlocksAction, wallet.accountId, market?.walletSeller?.accountId],
   );
 
   const yourTurnTrade = useMemo(
@@ -362,7 +349,7 @@ const Home: NextPage = () => {
               <section className="card bg-base-100 shadow-md border border-base-300 p-6 w-full">
                 <h2 className="font-bold text-lg mb-1">Trade ticket</h2>
                 <p className="text-xs text-base-content/70 mb-3">
-                  Propose a trade between the Seller and the chosen Buyer; the Seller signs immediately.
+                  Buyer is the demo buyer. My wallet is listed after you onboard a wallet as Buyer.
                 </p>
                 <div className="flex flex-wrap gap-4 items-end mb-4">
                   <div className="flex flex-col gap-1">
@@ -403,6 +390,7 @@ const Home: NextPage = () => {
                     >
                       <option value="buyer">Buyer</option>
                       <option value="unverifiedBuyer">Unverified Buyer</option>
+                      {market.walletBuyer && <option value="wallet">My wallet ({market.walletBuyer.accountId})</option>}
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -442,15 +430,25 @@ const Home: NextPage = () => {
                   </p>
                 )}
 
-                <div className="flex gap-3 mb-4">
+                <div className="flex flex-wrap gap-3 mb-4">
                   <button
                     id="propose-trade"
                     className="btn btn-primary"
-                    disabled={proposeDisabled}
-                    onClick={handlePropose}
+                    disabled={demoProposeDisabled}
+                    onClick={() => handlePropose("demo")}
                   >
-                    {busyPropose ? "Proposing…" : "Propose trade (Seller signs)"}
+                    {busyPropose ? "Proposing…" : "Propose as demo Seller"}
                   </button>
+                  {market.walletSeller && (
+                    <button
+                      id="propose-trade-wallet"
+                      className="btn btn-secondary"
+                      disabled={walletProposeDisabled}
+                      onClick={() => handlePropose("wallet")}
+                    >
+                      {busyPropose ? "Proposing…" : `Propose as my wallet (${market.walletSeller.accountId})`}
+                    </button>
+                  )}
                 </div>
 
                 {newestTrade && (

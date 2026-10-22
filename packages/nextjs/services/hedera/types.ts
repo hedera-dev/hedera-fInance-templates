@@ -3,7 +3,7 @@
  * safe to import from a client component, unlike `~~/services/hedera/dvp` or `store`.
  */
 
-export type BuyerChoice = "buyer" | "unverifiedBuyer";
+export type BuyerChoice = "buyer" | "unverifiedBuyer" | "wallet";
 export type WalletRole = "seller" | "buyer";
 export type TradeStatus = "PENDING" | "SCHEDULED" | "SETTLED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 export type SettlementMode = "onSignature" | "atTime";

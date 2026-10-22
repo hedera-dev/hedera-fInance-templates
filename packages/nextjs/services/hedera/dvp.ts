@@ -108,9 +108,13 @@ async function buildSnapshot(market: Market): Promise<MarketSnapshot> {
 }
 
 /** Resolves the account that plays the chosen buyer side for a new trade. */
-function resolveBuyerAccountId(market: Market, buyerChoice: BuyerChoice, useWalletBuyer: boolean): string {
+function resolveBuyerAccountId(market: Market, buyerChoice: BuyerChoice): string {
   if (buyerChoice === "unverifiedBuyer") return market.unverifiedBuyer.accountId;
-  return useWalletBuyer && market.walletBuyer ? market.walletBuyer.accountId : market.buyer.accountId;
+  if (buyerChoice === "wallet") {
+    if (!market.walletBuyer) throw new Error("No wallet is onboarded as Buyer.");
+    return market.walletBuyer.accountId;
+  }
+  return market.buyer.accountId;
 }
 
 async function createDemoAccount(client: Client): Promise<DemoParty> {
@@ -377,17 +381,15 @@ export async function proposeTradeDemo(
   buyerChoice: BuyerChoice,
   settlementMode: SettlementMode,
   settlementDelayMinutes?: number,
-  useWalletBuyer = false,
 ): Promise<MarketSnapshot> {
   const market = requireMarket();
-  if (useWalletBuyer && !market.walletBuyer) throw new Error("No wallet is onboarded as Buyer.");
   assertValidTerms(quantity, price);
   const timing = computeTiming(settlementMode, settlementDelayMinutes);
 
   const client = getOperatorClient();
   try {
     const sellerAccountId = market.seller.accountId;
-    const buyerAccountId = resolveBuyerAccountId(market, buyerChoice, useWalletBuyer);
+    const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
     const sellerKey = PrivateKey.fromStringECDSA(market.seller.privateKey);
 
     const scheduleTx = scheduleCreateTx(
@@ -415,7 +417,7 @@ export async function proposeTradeDemo(
       sellerAccountId,
       buyerAccountId,
       sellerIsWallet: false,
-      buyerIsWallet: buyerChoice === "buyer" && useWalletBuyer,
+      buyerIsWallet: buyerChoice === "wallet",
       status: "PENDING",
       settlementResult: null,
       settlementMode,
@@ -725,8 +727,8 @@ export async function prepareWalletSellerPropose(
   const client = getOperatorClient();
   try {
     const sellerAccountId = market.walletSeller.accountId;
-    const buyerAccountId = resolveBuyerAccountId(market, buyerChoice, true);
-    const buyerIsWallet = buyerChoice === "buyer" && market.walletBuyer != null;
+    const buyerAccountId = resolveBuyerAccountId(market, buyerChoice);
+    const buyerIsWallet = buyerChoice === "wallet";
     const sellerPublicKey = await fetchWalletPublicKey(sellerAccountId);
     const transactionId = TransactionId.generate(sellerAccountId);
 

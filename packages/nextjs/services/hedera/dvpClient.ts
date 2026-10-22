@@ -83,7 +83,6 @@ export async function proposeTrade(
   buyerChoice: BuyerChoice,
   settlementMode: SettlementMode,
   settlementDelayMinutes?: number,
-  useWalletBuyer = false,
 ): Promise<MarketSnapshot> {
   const { market } = await postJson<{ market: MarketSnapshot }>("/api/hedera/dvp/trade", {
     quantity,
@@ -91,7 +90,6 @@ export async function proposeTrade(
     buyerChoice,
     settlementMode,
     settlementDelayMinutes,
-    useWalletBuyer,
   });
   return market;
 }

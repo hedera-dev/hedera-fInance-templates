@@ -3,8 +3,8 @@ import { describeTradeChanges } from "~~/app/_components/dvp/TradeChanges";
 import type { TradeSnapshot } from "~~/services/hedera/types";
 
 const buyerLabel = (trade: TradeSnapshot): string => {
-  const base = trade.buyerChoice === "unverifiedBuyer" ? "Unverified buyer" : "Buyer";
-  return trade.buyerIsWallet ? `${base} (wallet)` : base;
+  if (trade.buyerChoice === "wallet" || trade.buyerIsWallet) return "My wallet";
+  return trade.buyerChoice === "unverifiedBuyer" ? "Unverified buyer" : "Buyer";
 };
 
 const formatDate = (iso: string) =>

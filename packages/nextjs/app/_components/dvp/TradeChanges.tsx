@@ -21,11 +21,12 @@ export function describeTradeChanges(trade: TradeSnapshot): ReactNode {
   }
 
   const seller = trade.sellerIsWallet ? "Seller (wallet)" : "Seller";
-  const buyer = trade.buyerIsWallet
-    ? "Buyer (wallet)"
-    : trade.buyerChoice === "unverifiedBuyer"
-      ? "Unverified buyer"
-      : "Buyer";
+  const buyer =
+    trade.buyerChoice === "wallet" || trade.buyerIsWallet
+      ? "My wallet"
+      : trade.buyerChoice === "unverifiedBuyer"
+        ? "Unverified buyer"
+        : "Buyer";
 
   return (
     <span className="flex flex-col">
