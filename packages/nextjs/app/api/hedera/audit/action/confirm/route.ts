@@ -11,14 +11,11 @@ async function fallBackToIssuer(): Promise<void> {
   const desk = getDesk();
   await releaseWalletEntry(desk);
   if (!hasOperatorEnv() || desk.entries.length === 0) return;
-  const client = getOperatorClient();
   try {
-    await flushEntries(client, desk);
+    await flushEntries(getOperatorClient(), desk);
   } catch (error) {
     // Still queued, and the reconciler keeps trying.
     console.error("[audit] issuer fallback deferred", error);
-  } finally {
-    client.close();
   }
 }
 

@@ -86,6 +86,7 @@ function entryAt(desk: Desk, queued: QueuedEntry): AuditEntry {
 export function queueEntry(desk: Desk, fields: EntryFields): QueuedEntry {
   const queued: QueuedEntry = { fields, transactionId: null, wallet: null, published: null };
   desk.entries.push(queued);
+  ensureReconciler();
   return queued;
 }
 
@@ -298,20 +299,24 @@ declare global {
 async function reconcile(): Promise<void> {
   const desk = getDesk();
   if (!desk.topicId || desk.entries.length === 0 || !hasOperatorEnv()) return;
-  const client = getOperatorClient();
   try {
-    await flushEntries(client, desk);
+    // Never closed: `getOperatorClient` hands out one client for the whole process,
+    // and closing it breaks every later transaction with a message about freezing.
+    await flushEntries(getOperatorClient(), desk);
   } catch (error) {
     console.error("[audit] retry failed", error);
-  } finally {
-    client.close();
   }
 }
 
+/**
+ * Started by the first queued entry rather than when this module loads: Next imports
+ * every route module during the build to collect its metadata, in a worker that has
+ * to exit, and a live interval there fails the build with "Failed to collect page
+ * data". Unref'd too, so it never holds a process open by itself.
+ */
 function ensureReconciler(): void {
   if (globalThis.__hcsAuditReconciler) return;
   const timer = setInterval(() => void reconcile(), RECONCILE_INTERVAL_MS);
   timer.unref?.();
   globalThis.__hcsAuditReconciler = timer;
 }
-ensureReconciler();

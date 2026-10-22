@@ -39,6 +39,10 @@ export function getOperator(): Operator {
 // Keep a single Client (and the single underlying network connection pool)
 // across requests in this server process. Stashed on globalThis so Next.js
 // dev-mode module reloads don't spawn a new one per request.
+//
+// Callers must never `close()` it: it is shared, and a closed client fails every
+// later transaction with "transaction must have been frozen before calculating the
+// hash will be stable" — which looks like a bug in the transaction, not the client.
 const globalForHedera = globalThis as unknown as { __hcsAuditClient?: Client };
 
 export function getOperatorClient(): Client {
