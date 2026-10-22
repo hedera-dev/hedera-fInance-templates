@@ -37,5 +37,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ address
     txHash: outcome.ok ? outcome.txHash : undefined,
   });
 
-  return NextResponse.json(await buildDeskStatus());
+  const status = await buildDeskStatus();
+  return NextResponse.json(outcome.ok ? status : { ...status, actionError: outcome.error });
 }

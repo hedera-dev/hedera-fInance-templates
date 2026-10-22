@@ -12,7 +12,10 @@ export type BondTerms = {
   startingDateIso: string;
   maturityDateIso: string;
   maxSupply: number;
-  totalSupply: number;
+  /** null when the chain could not be read just now; never silently 0. */
+  totalSupply: number | null;
+  /** False when these are the values recorded at issue rather than a fresh read. */
+  chainRead: boolean;
 };
 
 export type InvestorLabel = "Investor A" | "Investor B" | "Your wallet";
@@ -21,8 +24,10 @@ export type InvestorView = {
   label: InvestorLabel;
   address: string;
   hederaAccountId: string | null;
-  approved: boolean;
-  balance: number;
+  /** null when the control list could not be read; shown as unknown, never as "Not approved". */
+  approved: boolean | null;
+  /** null when the balance could not be read; shown as unavailable, never as 0. */
+  balance: number | null;
 };
 
 export type ActivityEntryView = {
@@ -39,6 +44,8 @@ export type DeskStatus = {
   bond: BondTerms | null;
   investors: InvestorView[];
   activity: ActivityEntryView[];
+  /** Set when the action that produced this status was refused, with the reason to show. */
+  actionError?: string;
 };
 
 export type IssueBondInput = {

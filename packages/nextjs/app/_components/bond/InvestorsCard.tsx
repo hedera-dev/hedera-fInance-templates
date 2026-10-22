@@ -2,6 +2,8 @@ import { InvestorRow } from "./InvestorRow";
 import type { InvestorView } from "~~/types/ats";
 
 type Props = {
+  /** The last action's refusal or failure, shown in `#action-error`. */
+  actionError?: string | null;
   investors: InvestorView[];
   busyAddress: string | null;
   onApprove: (address: string) => void;
@@ -9,7 +11,7 @@ type Props = {
   onIssue: (address: string, amount: number) => void;
 };
 
-export const InvestorsCard = ({ investors, busyAddress, onApprove, onRevoke, onIssue }: Props) => {
+export const InvestorsCard = ({ investors, busyAddress, onApprove, onRevoke, onIssue, actionError }: Props) => {
   return (
     <div className="card bg-base-100 border border-base-300 shadow-sm">
       <div className="card-body gap-3">
@@ -17,6 +19,12 @@ export const InvestorsCard = ({ investors, busyAddress, onApprove, onRevoke, onI
           <h2 className="card-title text-lg">Investors</h2>
           <p className="text-sm text-base-content/60 m-0">Only approved investors may hold the bond.</p>
         </div>
+
+        {actionError ? (
+          <p id="action-error" className="text-sm text-error m-0" role="alert">
+            {actionError}
+          </p>
+        ) : null}
 
         <ul id="investors" className="flex flex-col gap-3">
           {investors.length === 0 ? (

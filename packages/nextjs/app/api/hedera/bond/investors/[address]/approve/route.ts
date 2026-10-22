@@ -31,5 +31,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ addres
     txHash: outcome.ok ? outcome.txHash : undefined,
   });
 
-  return NextResponse.json(await buildDeskStatus());
+  // 200 with the refusal attached: the action was carried out, and its answer was no. The
+  // page shows `actionError`; without it a refusal was visible only in the activity log.
+  const status = await buildDeskStatus();
+  return NextResponse.json(outcome.ok ? status : { ...status, actionError: outcome.error });
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Address } from "viem";
 import { getAccountIdForEvmAddressOnce } from "~~/services/ats/mirror";
-import { addActivity, addInvestor, getDesk } from "~~/services/ats/state";
+import { addActivity, getDesk, setWalletInvestor } from "~~/services/ats/state";
 import { buildDeskStatus } from "~~/services/ats/status";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   }
 
   const hederaAccountId = await getAccountIdForEvmAddressOnce(address).catch(() => null);
-  addInvestor({ label: "Your wallet", address: address as Address, hederaAccountId });
+  setWalletInvestor({ label: "Your wallet", address: address as Address, hederaAccountId });
   addActivity({ action: "Added wallet as investor", result: "SUCCESS" });
 
   return NextResponse.json(await buildDeskStatus());

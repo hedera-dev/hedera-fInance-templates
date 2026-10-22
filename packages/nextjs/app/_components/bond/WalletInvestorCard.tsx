@@ -55,6 +55,8 @@ export const WalletInvestorCard = ({
   } else if (!myInvestor) {
     stateMessage = "Add your wallet as an investor to continue.";
     showAddButton = true;
+  } else if (myInvestor.approved === null || myInvestor.balance === null) {
+    stateMessage = "The network could not be read just now, so your wallet's state is unknown. Try again shortly.";
   } else if (!myInvestor.approved) {
     stateMessage = "Wait for the issuer to approve your wallet before you can receive bonds.";
   } else if (myInvestor.balance <= 0) {

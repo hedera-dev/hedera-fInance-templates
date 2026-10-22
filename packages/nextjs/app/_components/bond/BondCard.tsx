@@ -57,6 +57,13 @@ export const BondCard = ({ bond }: { bond: BondTerms }) => {
           <Term label="Maturity date" value={formatDate(bond.maturityDateIso)} />
         </div>
 
+        {bond.chainRead ? null : (
+          <p className="text-sm text-warning m-0">
+            The network could not be read just now: these are the terms recorded when the bond was issued, and the
+            issued total is unavailable.
+          </p>
+        )}
+
         <div id="bond-supply" className="flex gap-4 text-sm">
           <span>
             <span className="text-base-content/50">Issued:</span> {formatNumber(bond.totalSupply)}

@@ -24,8 +24,16 @@ export const InvestorRow = ({ investor, busy, onApprove, onRevoke, onIssue }: Pr
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <span className="font-medium">{investor.label}</span>{" "}
-          <span className={investor.approved ? "badge badge-success badge-sm" : "badge badge-ghost badge-sm"}>
-            {investor.approved ? "Approved" : "Not approved"}
+          <span
+            className={
+              investor.approved === null
+                ? "badge badge-warning badge-sm"
+                : investor.approved
+                  ? "badge badge-success badge-sm"
+                  : "badge badge-ghost badge-sm"
+            }
+          >
+            {investor.approved === null ? "Unknown" : investor.approved ? "Approved" : "Not approved"}
           </span>
         </div>
         <span className="text-sm text-base-content/70">Balance: {formatNumber(investor.balance)}</span>
@@ -49,7 +57,7 @@ export const InvestorRow = ({ investor, busy, onApprove, onRevoke, onIssue }: Pr
         <button
           type="button"
           className="btn btn-sm btn-outline investor-approve"
-          disabled={investor.approved || busy}
+          disabled={investor.approved === true || busy}
           onClick={onApprove}
         >
           Approve
@@ -57,7 +65,7 @@ export const InvestorRow = ({ investor, busy, onApprove, onRevoke, onIssue }: Pr
         <button
           type="button"
           className="btn btn-sm btn-outline investor-revoke"
-          disabled={!investor.approved || busy}
+          disabled={investor.approved === false || busy}
           onClick={onRevoke}
         >
           Revoke

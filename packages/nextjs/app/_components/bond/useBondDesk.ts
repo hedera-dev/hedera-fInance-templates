@@ -45,6 +45,7 @@ export function useBondDesk() {
   const [statusLoaded, setStatusLoaded] = useState(false);
 
   const [steps, setSteps] = useState<StepsState>(initialSteps);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
   const [justIssued, setJustIssued] = useState(false);
@@ -122,41 +123,50 @@ export function useBondDesk() {
     [refreshStatus],
   );
 
-  const approveInvestor = useCallback(async (address: string) => {
+  /**
+   * Every investor action goes through here, so none of them can swallow an outcome: a
+   * refusal arrives as `actionError` on the new status, and a request that fails outright
+   * used to become an unhandled rejection with nothing shown.
+   */
+  const runInvestorAction = useCallback(async (url: string, body: unknown, address: string) => {
     setBusyAddress(address);
+    setActionError(null);
     try {
-      const data = await postJson<DeskStatus>(`/api/hedera/bond/investors/${address}/approve`, {});
-      if (mounted.current) setStatus(data);
+      const data = await postJson<DeskStatus>(url, body);
+      if (!mounted.current) return;
+      setStatus(data);
+      setActionError(data.actionError ?? null);
+    } catch (error) {
+      if (mounted.current) setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       if (mounted.current) setBusyAddress(null);
     }
   }, []);
 
-  const revokeInvestor = useCallback(async (address: string) => {
-    setBusyAddress(address);
-    try {
-      const data = await postJson<DeskStatus>(`/api/hedera/bond/investors/${address}/revoke`, {});
-      if (mounted.current) setStatus(data);
-    } finally {
-      if (mounted.current) setBusyAddress(null);
-    }
-  }, []);
+  const approveInvestor = useCallback(
+    (address: string) => runInvestorAction(`/api/hedera/bond/investors/${address}/approve`, {}, address),
+    [runInvestorAction],
+  );
 
-  const issueToInvestor = useCallback(async (address: string, amount: number) => {
-    setBusyAddress(address);
-    try {
-      const data = await postJson<DeskStatus>(`/api/hedera/bond/investors/${address}/issue`, { amount });
-      if (mounted.current) setStatus(data);
-    } finally {
-      if (mounted.current) setBusyAddress(null);
-    }
-  }, []);
+  const revokeInvestor = useCallback(
+    (address: string) => runInvestorAction(`/api/hedera/bond/investors/${address}/revoke`, {}, address),
+    [runInvestorAction],
+  );
+
+  const issueToInvestor = useCallback(
+    (address: string, amount: number) =>
+      runInvestorAction(`/api/hedera/bond/investors/${address}/issue`, { amount }, address),
+    [runInvestorAction],
+  );
 
   const addWalletInvestor = useCallback(async (address: string) => {
     setAddingWallet(true);
+    setActionError(null);
     try {
       const data = await postJson<DeskStatus>("/api/hedera/bond/investors/wallet", { address });
       if (mounted.current) setStatus(data);
+    } catch (error) {
+      if (mounted.current) setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       if (mounted.current) setAddingWallet(false);
     }
@@ -170,6 +180,7 @@ export function useBondDesk() {
   return {
     status,
     statusLoaded,
+    actionError,
     refreshStatus,
     steps,
     issuing,

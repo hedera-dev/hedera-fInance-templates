@@ -21,6 +21,7 @@ const Home: NextPage = () => {
     clearJustIssued,
     issueBond,
     busyAddress,
+    actionError,
     approveInvestor,
     revokeInvestor,
     issueToInvestor,
@@ -63,6 +64,7 @@ const Home: NextPage = () => {
           {status?.bond ? (
             <InvestorsCard
               investors={status.investors}
+              actionError={actionError}
               busyAddress={busyAddress}
               onApprove={approveInvestor}
               onRevoke={revokeInvestor}

@@ -71,6 +71,19 @@ export function addInvestor(investor: InvestorRecord): void {
   }
 }
 
+/**
+ * Records the connected wallet, replacing any wallet recorded before it. The desk follows one
+ * wallet at a time and the row is labelled `Your wallet`; keeping an older one left two rows
+ * with that label, only one of which was yours.
+ */
+export function setWalletInvestor(investor: InvestorRecord): void {
+  const desk = getStash();
+  desk.investors = desk.investors.filter(
+    i => i.label !== "Your wallet" || i.address.toLowerCase() === investor.address.toLowerCase(),
+  );
+  addInvestor(investor);
+}
+
 export function findInvestor(address: string): InvestorRecord | undefined {
   return getStash().investors.find(i => i.address.toLowerCase() === address.toLowerCase());
 }

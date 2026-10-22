@@ -23,6 +23,13 @@ export const ROLE_CONTROL_LIST = "0x6ed9a91e996c6475ecdc28ecbdbe9bd1122fc62b30cd
 export const GAS_LIMIT_DEPLOY_BOND = 8_000_000n;
 export const GAS_LIMIT_CONTROL_LIST = 400_000n;
 export const GAS_LIMIT_ISSUE = 1_500_000n;
+/**
+ * Funding a demo investor lazily creates its Hedera account, which is why this is far more
+ * than a plain transfer's 21,000: measured at 607,858 gas on testnet across nine of these
+ * transactions. Hedera charges the greater of gas used and 80% of the limit, so 1,000,000
+ * costs about 800,000 — trimming it closer saves a little, at the cost of headroom on a
+ * step whose failure breaks the whole issue flow. Left wide on purpose.
+ */
 export const GAS_LIMIT_FUND_INVESTOR = 1_000_000n;
 
 /** HBAR funding per demo investor, well under the spec's "at most 1 HBAR" ceiling. */

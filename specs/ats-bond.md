@@ -50,7 +50,9 @@ element carrying its state in `data-status` (`pending`, `active`, `done`,
 (create the demo investors), `#issue-step-verify` (read the bond back). A
 spinner marks the running step, a check and the ids it produced mark finished
 ones, a cross marks a failure. The server reports each step as it starts and
-finishes; the list reflects real progress. A one-line explanation per step sits
+finishes; the list reflects real progress. No step is left `active` once the run
+has ended: a failure anywhere marks the step that was running as `failed`, so a
+spinner never outlives the run. A one-line explanation per step sits
 in a collapsed "What each step does" section that starts closed. The issue
 button stays visible without scrolling. When issuing finishes the page scrolls
 the bond into view.
@@ -60,7 +62,9 @@ the bond into view.
 - `#bond-address` — the bond's EVM address, and `#bond-contract-id` — its
   Hedera contract id, both linked to HashScan
 - `#bond-terms` — name, symbol, ISIN, currency (`USD`), face value, start date,
-  maturity date, as **read back from the bond contract**, not echoed from the form
+  maturity date, as **read back from the bond contract**, not echoed from the
+  form. The start date comes from the factory's `BondDeployed` event, which
+  records the terms the bond was actually created with
 - `#bond-supply` — total issued and maximum supply, read from the contract
 
 **The investors.** `#investors` lists every investor as rows with the class
@@ -73,6 +77,11 @@ approved`), and its bond balance read from the contract. Each row has:
   one of which is enabled depending on its state
 - an amount input (class `investor-amount`, whole number, default `100`) and
   `Issue` (class `investor-issue`)
+
+`#action-error` carries the reason the last investor action was refused — the
+decoded ATS error, for example `AccountIsBlocked(0x…)` — or the reason a request
+failed outright. It is cleared when the next action starts. A refusal appears
+there as well as in the activity log; an action that is refused is never silent.
 
 **The wallet investor.** The header keeps the scaffold's RainbowKit connect
 button, offering MetaMask (and WalletConnect); the burner wallet is removed.
@@ -117,6 +126,15 @@ unapproved address it is refused by the bond, and the page says so.
 approval state are read from the bond contract, and refresh after each action
 without a page reload.
 
+**A value that could not be read is shown as unknown, never as a number.** When
+a read fails, the investor's approval shows `Unknown` and its balance
+`unavailable`; the issued total shows `unavailable`. Never `Not approved` and
+never `0`: on a compliance desk those are claims about the chain, and a failed
+read has made none. The bond keeps the terms read from it when it was issued,
+and says that its live values could not be read. An investor whose approval is
+unknown keeps both `Approve` and `Revoke` enabled, because the contract, not
+the page, decides which one applies.
+
 **Private keys never reach the browser.** No response the server sends contains
 the operator key or a demo investor's key.
 
@@ -158,6 +176,21 @@ described.
 
 - No contracts are deployed by this app and no Solidity package is added. The
   bond is deployed by the ATS factory.
+- The new bond's address is taken from the factory's `BondDeployed` event in the
+  deployment receipt, not from simulating `deployBond`. A simulation predicts the
+  address against the state at that moment, and this factory is shared: anyone
+  else deploying through it in between changes the address, which turned a
+  successful deployment into a failed run and abandoned a bond that had just been
+  paid for. The simulation is still run first — it is how a refusal is decoded
+  before a transaction is sent — and the prediction is only a fallback for a
+  receipt with no event in it.
+- Every route is unauthenticated, and `POST /api/hedera/bond/activity` lets the
+  browser write any activity row it likes — it exists because the wallet's
+  transfer is signed client-side, so only the browser knows the outcome. Both are
+  the bargain of a localhost tutorial: the desk spends the operator account and
+  mints a real security, so this app is not meant to be reachable by anyone else.
+  Adding a wallet as an investor is likewise taken on trust; no signature proves
+  the address belongs to whoever asked.
 - ATS on Hedera testnet, version 8: factory `0.0.9213391`, Business Logic
   Resolver `0.0.9212226`. Their EVM addresses are read from the mirror node
   (`/api/v1/contracts/<id>` → `evm_address`).

@@ -17,18 +17,21 @@ import { createDemoInvestor } from "./investors";
 import { getContractEvmAddress, getContractIdForEvmAddress } from "./mirror";
 import { readBondView } from "./read";
 import { addActivity, addInvestor, resetDesk } from "./state";
-import { stringToHex } from "viem";
+import { decodeEventLog, stringToHex } from "viem";
 import type { Address } from "viem";
 import * as chains from "viem/chains";
-import type { InvestorView, IssueBondInput, IssueEvent } from "~~/types/ats";
-
-const MONTH_IN_SECONDS_APPROX = 30 * 24 * 3600;
+import type { InvestorView, IssueBondInput, IssueEvent, IssueStepId } from "~~/types/ats";
+import { bondDates } from "~~/utils/ats/dates";
 
 export async function runIssueBond(input: IssueBondInput, emit: (event: IssueEvent) => void): Promise<void> {
   const operator = requireOperator();
+  // Tracked so a throw anywhere below can mark the step that was running as failed. A step
+  // left `active` spins forever while the page says the run failed.
+  let active: IssueStepId = "version";
 
   try {
     // --- Step 1: resolve the bond configuration's latest version -------------------------------
+    active = "version";
     emit({ step: "version", status: "active" });
     const [resolverAddress, factoryAddress] = await Promise.all([
       getContractEvmAddress(ATS_RESOLVER_CONTRACT_ID),
@@ -49,16 +52,10 @@ export async function runIssueBond(input: IssueBondInput, emit: (event: IssueEve
     emit({ step: "version", status: "done", version: version.toString() });
 
     // --- Step 2: deploy through the ATS factory -------------------------------------------------
+    active = "deploy";
     emit({ step: "deploy", status: "active" });
 
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const startingDate = BigInt(nowSeconds + 5 * 60); // a few minutes in the future
-    const maturity = new Date((nowSeconds + 5 * 60) * 1000);
-    maturity.setUTCMonth(maturity.getUTCMonth() + input.maturityMonths);
-    let maturityDate = BigInt(Math.floor(maturity.getTime() / 1000));
-    // setUTCMonth can land on a date that isn't exactly N*30 days out for short/irregular
-    // months; keep it simple and consistent with the calendar rather than approximating.
-    if (maturityDate <= startingDate) maturityDate = startingDate + BigInt(MONTH_IN_SECONDS_APPROX);
+    const { startingDate, maturityDate } = bondDates(Math.floor(Date.now() / 1000), input.maturityMonths);
 
     const bondData = {
       security: {
@@ -129,36 +126,53 @@ export async function runIssueBond(input: IssueBondInput, emit: (event: IssueEve
       gas: GAS_LIMIT_DEPLOY_BOND,
     });
     const receipt = await operator.publicClient.waitForTransactionReceipt({ hash: txHash });
-    const emittedFromPredicted = receipt.logs.some(log => log.address.toLowerCase() === predictedAddress.toLowerCase());
-    if (receipt.status !== "success" || !emittedFromPredicted) {
-      const message =
-        receipt.status !== "success"
-          ? "The deployment transaction failed on-chain."
-          : "The deployment transaction did not emit any logs from the predicted bond address.";
+    if (receipt.status !== "success") {
+      const message = "The deployment transaction failed on-chain.";
       emit({ step: "deploy", status: "failed", error: message });
       addActivity({ action: `Issue bond ${input.name} (${input.symbol})`, result: "Error", txHash });
       emit({ step: "result", status: "failed", error: message });
       return;
     }
 
-    const contractId = (await getContractIdForEvmAddress(predictedAddress)) ?? "pending";
-    emit({ step: "deploy", status: "done", address: predictedAddress, contractId, txHash });
+    // The factory's own event says where the bond went, and what dates it was given. The
+    // simulated address is only a prediction: it is computed against the state at simulation
+    // time, so anyone else deploying through this shared testnet factory in between would
+    // change it — and trusting it then meant abandoning a bond that had just been paid for.
+    const deployed = bondFromReceiptLogs(receipt.logs, factoryAddress);
+    const bondAddress = deployed?.address ?? predictedAddress;
+    if (!deployed) {
+      const emittedFromPredicted = receipt.logs.some(
+        log => log.address.toLowerCase() === predictedAddress.toLowerCase(),
+      );
+      if (!emittedFromPredicted) {
+        const message = "The deployment emitted no BondDeployed event and no logs from the predicted address.";
+        emit({ step: "deploy", status: "failed", error: message });
+        addActivity({ action: `Issue bond ${input.name} (${input.symbol})`, result: "Error", txHash });
+        emit({ step: "result", status: "failed", error: message });
+        return;
+      }
+    }
+    const startingDateOnChain = deployed?.startingDate ?? startingDate;
+
+    const contractId = (await getContractIdForEvmAddress(bondAddress)) ?? "pending";
+    emit({ step: "deploy", status: "done", address: bondAddress, contractId, txHash });
 
     resetDesk({
-      address: predictedAddress,
+      address: bondAddress,
       contractId,
       name: input.name,
       symbol: input.symbol,
       isin: input.isin,
       currency: "USD",
       faceValue: input.faceValue,
-      startingDateIso: new Date(Number(startingDate) * 1000).toISOString(),
+      startingDateIso: new Date(Number(startingDateOnChain) * 1000).toISOString(),
       maturityDateIso: new Date(Number(maturityDate) * 1000).toISOString(),
       maxSupply: input.maxSupply,
     });
     addActivity({ action: `Issued bond ${input.name} (${input.symbol})`, result: "SUCCESS", txHash });
 
     // --- Step 3: create the demo investors --------------------------------------------------
+    active = "investors";
     emit({ step: "investors", status: "active" });
     const investorViews: InvestorView[] = [];
     for (const label of ["Investor A", "Investor B"] as const) {
@@ -176,29 +190,58 @@ export async function runIssueBond(input: IssueBondInput, emit: (event: IssueEve
     emit({ step: "investors", status: "done", investors: investorViews });
 
     // --- Step 4: read the bond back from the chain ------------------------------------------
+    active = "verify";
     emit({ step: "verify", status: "active" });
-    const view = await readBondView(predictedAddress);
+    const view = await readBondView(bondAddress);
     emit({
       step: "verify",
       status: "done",
       bond: {
-        address: predictedAddress,
+        address: bondAddress,
         contractId,
         name: view.name,
         symbol: view.symbol,
         isin: view.isin,
         currency: view.currency,
         faceValue: view.faceValue,
-        startingDateIso: new Date(Number(startingDate) * 1000).toISOString(),
+        startingDateIso: new Date(Number(startingDateOnChain) * 1000).toISOString(),
         maturityDateIso: view.maturityDateIso,
         maxSupply: view.maxSupply,
         totalSupply: view.totalSupply,
+        chainRead: true,
       },
     });
 
     emit({ step: "result", status: "done" });
   } catch (error) {
     const decoded = decodeAtsError(error);
+    emit({ step: active, status: "failed", error: decoded.message });
     emit({ step: "result", status: "failed", error: decoded.message });
   }
+}
+
+/** The bond address and starting date the factory recorded, from its `BondDeployed` event. */
+function bondFromReceiptLogs(
+  logs: readonly { address: string; data: `0x${string}`; topics: readonly `0x${string}`[] }[],
+  factoryAddress: Address,
+): { address: Address; startingDate: bigint } | null {
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== factoryAddress.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: factoryAbi,
+        data: log.data,
+        topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
+      });
+      if (decoded.eventName !== "BondDeployed") continue;
+      const args = decoded.args as unknown as {
+        bondAddress: Address;
+        bondData: { bondDetails: { startingDate: bigint } };
+      };
+      return { address: args.bondAddress, startingDate: args.bondData.bondDetails.startingDate };
+    } catch {
+      // Not the event we are looking for; the factory emits others.
+    }
+  }
+  return null;
 }
