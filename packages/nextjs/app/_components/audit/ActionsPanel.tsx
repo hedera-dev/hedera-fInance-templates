@@ -67,8 +67,8 @@ export const ActionsPanel = ({ disabled, busyAction, actionError, holderAccountI
 
       <div className="flex flex-wrap gap-2">
         {actionButton("action-grant-kyc", "grant_kyc", "Grant KYC", "Granting KYC…")}
-        {actionButton("action-freeze", "freeze", "Freeze", "Freezing…")}
-        {actionButton("action-unfreeze", "unfreeze", "Unfreeze", "Unfreezing…")}
+        {actionButton("action-freeze", "freeze", "Freeze holder", "Freezing…")}
+        {actionButton("action-unfreeze", "unfreeze", "Unfreeze holder", "Unfreezing…")}
       </div>
 
       <div className="flex flex-col gap-1">

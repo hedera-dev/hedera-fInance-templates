@@ -18,6 +18,22 @@ export type AuditEntry = {
   prev: string;
 };
 
+/** Everything in an entry except the two fields the chain itself owns. */
+export type EntryFields = Omit<AuditEntry, "v" | "prev">;
+
+/**
+ * The mirror node transaction type each event must reference. Checked by the
+ * regulator's feed: without it an entry could claim `freeze` while pointing at
+ * any successful transaction at all, and the feed would still call it verified.
+ */
+export const EVENT_TRANSACTION_NAME: Record<AuditEvent, string> = {
+  issue: "TOKENCREATION",
+  grant_kyc: "TOKENGRANTKYC",
+  transfer: "CRYPTOTRANSFER",
+  freeze: "TOKENFREEZE",
+  unfreeze: "TOKENUNFREEZE",
+};
+
 export const ZERO_HASH = "0".repeat(64);
 
 export type TokenAction = "grant_kyc" | "transfer" | "freeze" | "unfreeze";

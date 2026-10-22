@@ -7,7 +7,8 @@ import {
   TokenUnfreezeTransaction,
   TransferTransaction,
 } from "@hiero-ledger/sdk";
-import type { TokenAction } from "~~/services/hcsAudit/types";
+import type { Desk } from "~~/app/api/hedera/audit/_lib/state";
+import { ACTION_EVENT, type EntryFields, type TokenAction } from "~~/services/hcsAudit/types";
 
 export type ActionOutcome = { tx: string; result: string };
 
@@ -95,3 +96,56 @@ export function resolveTarget(raw: unknown, holderAccountId: string, issuerAccou
 }
 
 export const TOKEN_ACTIONS: readonly TokenAction[] = ["grant_kyc", "transfer", "freeze", "unfreeze"];
+
+/**
+ * The one place a token action is read off a request and performed.
+ *
+ * Both the Issuer route and the HashPack route go through it, so the two can never
+ * drift on what they validate or in what order they touch the network: the action
+ * happens, and its entry is queued from the same outcome.
+ */
+export type ActionRequest = { action: TokenAction; amount: number | null; account?: unknown };
+
+export function parseActionRequest(
+  body: { action?: string; amount?: number; account?: unknown } | null,
+): ActionRequest {
+  const action = body?.action as TokenAction | undefined;
+  if (!action || !TOKEN_ACTIONS.includes(action)) throw new Error("Unknown action.");
+  if (action !== "transfer") return { action, amount: null, account: body?.account };
+  const amount = Number(body?.amount);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("Transfer amount must be a positive whole number.");
+  }
+  return { action, amount, account: body?.account };
+}
+
+/** Performs the action on chain and returns the entry that records it, unchained. */
+export async function performAction(
+  client: Client,
+  desk: Desk & { tokenId: string; holderAccountId: string },
+  issuerAccountId: string,
+  request: ActionRequest,
+): Promise<EntryFields> {
+  const account = resolveTarget(request.account, desk.holderAccountId, issuerAccountId);
+  const tokenId = desk.tokenId;
+
+  let outcome: ActionOutcome;
+  if (request.action === "transfer") {
+    outcome = await transferToHolder(client, tokenId, issuerAccountId, account, request.amount as number);
+  } else if (request.action === "grant_kyc") {
+    outcome = await grantKyc(client, tokenId, account);
+  } else if (request.action === "freeze") {
+    outcome = await freezeHolder(client, tokenId, account);
+  } else {
+    outcome = await unfreezeHolder(client, tokenId, account);
+  }
+
+  return {
+    event: ACTION_EVENT[request.action],
+    token: tokenId,
+    account,
+    amount: request.amount,
+    tx: outcome.tx,
+    result: outcome.result,
+  };
+}

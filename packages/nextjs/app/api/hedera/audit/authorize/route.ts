@@ -14,9 +14,14 @@ function publicKeyFromMirror(type: string, hex: string): PublicKey {
 }
 
 /**
- * Changes the topic's submit key to a 1-of-2 key list: the issuer's key, or
- * the wallet's. Signed with the topic's admin key (the issuer's), on the
- * server — the wallet never needs to touch this.
+ * Adds a wallet to the topic's submit key: a threshold-1 key list of the issuer's
+ * key and every wallet authorised so far. Signed with the topic's admin key (the
+ * issuer's), on the server — the wallet never needs to touch this.
+ *
+ * Cumulative on purpose. Setting the key to the issuer plus only the newest wallet
+ * silently took the right to publish away from an earlier one while `#publishers`
+ * went on listing it, so the page claimed a publisher the network would have
+ * refused.
  */
 export async function POST(req: Request) {
   if (!hasOperatorEnv()) {
@@ -68,7 +73,10 @@ export async function POST(req: Request) {
   }
 
   const client = getOperatorClient();
-  const newSubmitKey = new KeyList([operatorKey.publicKey, walletPublicKey], 1);
+  const walletKeys = desk.walletPublisherKeys.some(p => p.accountId === walletAccountId)
+    ? desk.walletPublisherKeys
+    : [...desk.walletPublisherKeys, { accountId: walletAccountId, publicKey: walletPublicKey }];
+  const newSubmitKey = new KeyList([operatorKey.publicKey, ...walletKeys.map(p => p.publicKey)], 1);
 
   try {
     const response = await new TopicUpdateTransaction().setTopicId(topicId).setSubmitKey(newSubmitKey).execute(client);
@@ -77,6 +85,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }
 
+  // Only after the network accepted the new key, so the list never claims more than
+  // the topic allows.
+  desk.walletPublisherKeys = walletKeys;
   if (!desk.publishers.some(p => p.accountId === walletAccountId)) {
     desk.publishers.push({ accountId: walletAccountId, role: "hashpack" });
   }

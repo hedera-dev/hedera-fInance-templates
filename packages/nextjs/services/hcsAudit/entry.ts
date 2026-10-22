@@ -1,4 +1,4 @@
-import type { AuditEntry } from "~~/services/hcsAudit/types";
+import type { AuditEntry } from "./types";
 
 /**
  * Serializes an entry with a fixed key order. The exact bytes produced here are
@@ -34,20 +34,29 @@ function isAuditEvent(value: unknown): value is AuditEntry["event"] {
   );
 }
 
-/** Validates that a decoded JSON value has exactly the shape of an audit entry. */
+/** Every key an entry has, and the only keys it may have. */
+const ENTRY_KEYS = ["v", "event", "token", "account", "amount", "tx", "result", "prev"] as const;
+
+/**
+ * Validates that a decoded JSON value has exactly the shape of an audit entry:
+ * these fields, no others, and an amount that is a whole number of tokens.
+ * Anything else is not an entry, and the feed says so rather than reading it.
+ */
 export function isAuditEntry(value: unknown): value is AuditEntry {
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
+  const keys = Object.keys(v);
+  if (keys.length !== ENTRY_KEYS.length || !ENTRY_KEYS.every(key => key in v)) return false;
   return (
     v.v === 1 &&
     isAuditEvent(v.event) &&
     typeof v.token === "string" &&
     (v.account === null || typeof v.account === "string") &&
-    (v.amount === null || typeof v.amount === "number") &&
+    (v.amount === null || (typeof v.amount === "number" && Number.isInteger(v.amount) && v.amount > 0)) &&
     typeof v.tx === "string" &&
     typeof v.result === "string" &&
     typeof v.prev === "string" &&
-    v.prev.length === 64
+    /^[0-9a-f]{64}$/.test(v.prev)
   );
 }
 

@@ -170,8 +170,11 @@ export function useAuditDesk() {
           });
           setLastEntry(confirmed.entry);
         } catch (signError) {
+          // The token action already happened on chain, so its entry still has to be
+          // published; declining the signature hands it back to the Issuer.
           await postJson("/api/hedera/audit/action/confirm", { cancelled: true }).catch(() => undefined);
-          throw signError;
+          const reason = signError instanceof Error ? signError.message : String(signError);
+          throw new Error(`${reason} — the entry was published by the Issuer instead.`);
         }
       } catch (e) {
         setActionError(e instanceof Error ? e.message : String(e));

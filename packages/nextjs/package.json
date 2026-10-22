@@ -9,7 +9,8 @@
     "format": "prettier --write . '!(node_modules|.next|contracts)/**/*'",
     "lint": "next lint",
     "serve": "next start",
-    "start": "next dev"
+    "start": "next dev",
+    "check-audit": "rm -rf .audit-check && tsc -p tsconfig.audit-check.json && node --test .audit-check/tests"
   },
   "dependencies": {
     "@hashgraph/hedera-wallet-connect": "2.1.3",

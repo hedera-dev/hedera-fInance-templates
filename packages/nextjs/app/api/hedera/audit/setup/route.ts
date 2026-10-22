@@ -5,13 +5,11 @@ import {
   TokenAssociateTransaction,
   TokenCreateTransaction,
   TopicCreateTransaction,
-  TopicMessageSubmitTransaction,
 } from "@hiero-ledger/sdk";
 import { getOperator, getOperatorClient, hasOperatorEnv } from "~~/app/api/hedera/audit/_lib/operator";
+import { publishEntry } from "~~/app/api/hedera/audit/_lib/publish";
 import { resetDesk } from "~~/app/api/hedera/audit/_lib/state";
-import { serializeEntry, sha256Hex } from "~~/services/hcsAudit/entry";
 import type { SetupEvent, SetupStepId } from "~~/services/hcsAudit/types";
-import { ZERO_HASH } from "~~/services/hcsAudit/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,24 +118,17 @@ export async function POST() {
         }
         send({ type: "step", step: "associate", status: "done" });
 
-        // Publish the first entry, referencing the token-creation transaction.
-        const issueEntry = {
-          v: 1 as const,
-          event: "issue" as const,
+        // The first entry, referencing the token-creation transaction. Queued like every
+        // other entry, so a failure here is retried instead of leaving a trail with no
+        // genesis entry and a token that exists.
+        await publishEntry(client, desk, {
+          event: "issue",
           token: tokenId,
           account: null,
           amount: null,
           tx: tokenCreateTx,
           result: tokenCreateResult,
-          prev: ZERO_HASH,
-        };
-        const issueBytes = serializeEntry(issueEntry);
-        const submitResponse = await new TopicMessageSubmitTransaction()
-          .setTopicId(topicId)
-          .setMessage(issueBytes)
-          .execute(client);
-        await submitResponse.getReceipt(client);
-        desk.lastHash = await sha256Hex(issueBytes);
+        });
 
         send({ type: "complete", topicId, tokenId, holderAccountId });
       } catch (error) {

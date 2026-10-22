@@ -1,25 +1,21 @@
 import { NextResponse } from "next/server";
-import {
-  freezeHolder,
-  grantKyc,
-  resolveTarget,
-  transferToHolder,
-  unfreezeHolder,
-} from "~~/app/api/hedera/audit/_lib/actions";
+import { parseActionRequest, performAction } from "~~/app/api/hedera/audit/_lib/actions";
 import { getOperator, getOperatorClient, hasOperatorEnv } from "~~/app/api/hedera/audit/_lib/operator";
-import { nextEntry, prepareEntryForWallet } from "~~/app/api/hedera/audit/_lib/publish";
+import { flushEntries, prepareEntryForWallet, queueEntry } from "~~/app/api/hedera/audit/_lib/publish";
 import { getDesk, requireSetUp } from "~~/app/api/hedera/audit/_lib/state";
-import { ACTION_EVENT, type TokenAction } from "~~/services/hcsAudit/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VALID_ACTIONS: readonly TokenAction[] = ["grant_kyc", "transfer", "freeze", "unfreeze"];
-
 /**
- * HashPack mode, step 1: the Issuer performs the real token action (as
- * always), builds the audit entry server-side with the correct `prev`, and
- * hands back an unsigned HCS submission for the wallet to sign and pay for.
+ * HashPack mode, step 1: the Issuer performs the real token action, queues its
+ * audit entry, and hands back an unsigned HCS submission for the wallet to sign
+ * and pay for.
+ *
+ * The queue is drained first, because the `prev` frozen into the bytes the wallet
+ * signs has to be the one it will really chain at. If something is still waiting —
+ * an earlier entry held for a signature — this refuses rather than preparing an
+ * entry whose `prev` would be wrong by the time it lands.
  */
 export async function POST(req: Request) {
   if (!hasOperatorEnv()) {
@@ -32,63 +28,29 @@ export async function POST(req: Request) {
     account?: string;
     walletAccountId?: string;
   } | null;
-  const action = body?.action as TokenAction | undefined;
   const walletAccountId = body?.walletAccountId;
-  if (!action || !VALID_ACTIONS.includes(action)) {
-    return NextResponse.json({ error: "Unknown action." }, { status: 400 });
-  }
-  if (!walletAccountId) {
-    return NextResponse.json({ error: "Connect HashPack first." }, { status: 400 });
-  }
-
   const desk = getDesk();
+
   try {
+    const request = parseActionRequest(body);
+    if (!walletAccountId) throw new Error("Connect HashPack first.");
     requireSetUp(desk);
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
-  }
-  if (desk.pending) {
-    return NextResponse.json({ error: "An entry is already awaiting a signature." }, { status: 409 });
-  }
 
-  const tokenId = desk.tokenId;
-  const client = getOperatorClient();
-  const { accountId: operatorId } = getOperator();
-  let holderAccountId: string;
-  try {
-    holderAccountId = resolveTarget(body?.account, desk.holderAccountId, operatorId.toString());
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
-  }
-
-  let amount: number | null = null;
-  let outcome: { tx: string; result: string };
-
-  if (action === "transfer") {
-    const rawAmount = Number(body?.amount);
-    if (!Number.isInteger(rawAmount) || rawAmount <= 0) {
-      return NextResponse.json({ error: "Transfer amount must be a positive whole number." }, { status: 400 });
+    const client = getOperatorClient();
+    await flushEntries(client, desk).catch(() => undefined);
+    if (desk.entries.length > 0) {
+      return NextResponse.json({ error: "An entry is already awaiting a signature." }, { status: 409 });
     }
-    amount = rawAmount;
-    outcome = await transferToHolder(client, tokenId, operatorId.toString(), holderAccountId, rawAmount);
-  } else if (action === "grant_kyc") {
-    outcome = await grantKyc(client, tokenId, holderAccountId);
-  } else if (action === "freeze") {
-    outcome = await freezeHolder(client, tokenId, holderAccountId);
-  } else {
-    outcome = await unfreezeHolder(client, tokenId, holderAccountId);
+
+    const { accountId: operatorId } = getOperator();
+    const fields = await performAction(client, desk, operatorId.toString(), request);
+    // Queued before it is offered to the wallet: if the wallet never signs it, the
+    // Issuer publishes this same entry instead of it being lost.
+    const queued = queueEntry(desk, fields);
+    const prepared = prepareEntryForWallet(client, desk, queued, walletAccountId);
+
+    return NextResponse.json(prepared);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }
-
-  const entry = nextEntry(desk, {
-    event: ACTION_EVENT[action],
-    token: tokenId,
-    account: holderAccountId,
-    amount,
-    tx: outcome.tx,
-    result: outcome.result,
-  });
-
-  const { transactionBytes } = await prepareEntryForWallet(client, desk, entry, walletAccountId);
-
-  return NextResponse.json({ entry, transactionBytes });
 }

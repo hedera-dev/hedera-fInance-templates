@@ -46,11 +46,15 @@ export function sdkTxIdToMirrorForm(tx: string): string {
   return `${account}-${seconds}-${nanos}`;
 }
 
+export type MirrorTokenTransfer = { token_id: string; account: string; amount: number };
+
 export type MirrorTransaction = {
   transaction_id: string;
   result: string;
   name: string;
   entity_id: string | null;
+  /** Present on CRYPTOTRANSFER; the legs a token transfer actually moved. */
+  token_transfers?: MirrorTokenTransfer[];
 };
 
 /** Looks up a transaction's recorded result on the mirror node, by its SDK-form id. */
@@ -62,6 +66,22 @@ export async function fetchMirrorTransaction(
   const data = await fetchJson<{ transactions: MirrorTransaction[] }>(`${baseUrl}/api/v1/transactions/${mirrorForm}`);
   if (!data || data.transactions.length === 0) return null;
   return data.transactions[0];
+}
+
+/**
+ * The newest messages on a topic. Used to confirm that the bytes a wallet was asked
+ * to submit are the bytes that actually landed, which a successful transaction id
+ * on its own does not establish.
+ */
+export async function fetchRecentTopicMessages(
+  topicId: string,
+  limit = 10,
+  baseUrl = MIRROR_BASE_URL,
+): Promise<MirrorTopicMessage[]> {
+  const data = await fetchJson<MirrorTopicMessagesResponse>(
+    `${baseUrl}/api/v1/topics/${topicId}/messages?order=desc&limit=${limit}`,
+  );
+  return data?.messages ?? [];
 }
 
 export type MirrorAccountKey = { type: "ECDSA_SECP256K1" | "ED25519" | string; key: string } | null;
