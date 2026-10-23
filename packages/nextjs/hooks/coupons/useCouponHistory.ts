@@ -8,7 +8,7 @@ export type CouponEntry = {
   key: string;
   coupon: number;
   consensusTime: string; // ISO
-  outcome: "PAID" | "MISSED" | "PRINCIPAL REPAID";
+  outcome: "PAID" | "MISSED" | "UNPAID" | "PRINCIPAL REPAID";
   totalPaid?: bigint;
   txHash: `0x${string}`;
 };
@@ -63,6 +63,15 @@ export function useCouponHistory(bondAddress: `0x${string}` | undefined) {
               consensusTime,
               outcome: "PRINCIPAL REPAID",
               totalPaid,
+              txHash,
+            });
+          } else if (decoded.eventName === "CouponUnpaid") {
+            const { coupon, holder } = decoded.args as { coupon: bigint; holder: `0x${string}` };
+            entries.push({
+              key: `${txHash}-unpaid-${holder}`,
+              coupon: Number(coupon),
+              consensusTime,
+              outcome: "UNPAID",
               txHash,
             });
           } else if (decoded.eventName === "CouponMissed") {

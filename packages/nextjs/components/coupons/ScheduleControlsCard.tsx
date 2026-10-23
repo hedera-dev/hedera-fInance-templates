@@ -39,7 +39,8 @@ export function ScheduleControlsCard({ bondAddress, bond, onRefetchBond }: Props
 
   // "the bond holds HBAR for its schedules": before `start()`, that's every coupon ahead of it.
   const hbarNeeded = bond ? parseEther((Number(bond.couponCount) * HBAR_RESERVE_PER_COUPON).toString()) : 0n;
-  const canStart = bond?.status === "CREATED" && bond.holdersCount > 0 && bond.hbarBalance >= hbarNeeded;
+  const hbarKnown = bond?.hbarBalance !== null && bond?.hbarBalance !== undefined;
+  const canStart = bond?.status === "CREATED" && bond.holdersCount > 0 && hbarKnown && bond.hbarBalance! >= hbarNeeded;
   const canStop = bond?.status === "RUNNING";
   const isDue = bond ? now >= Number(bond.dueTime) * 1000 : false;
   const canPayNow = bond?.status === "RUNNING" && isDue;

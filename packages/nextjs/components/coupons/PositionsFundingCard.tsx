@@ -50,6 +50,39 @@ function InvestorRow({
     query: { enabled: Boolean(bondAddress), refetchInterval: 4000 },
   });
 
+  // Coupon money this holder could not be sent — an unassociated account, say. Kept by the
+  // bond rather than lost, and payable once they can receive it.
+  const owed = useReadContract({
+    address: bondAddress,
+    abi: couponBondAbi,
+    functionName: "unpaidOf",
+    args: [row.evmAddress],
+    query: { enabled: Boolean(bondAddress), refetchInterval: 4000 },
+  });
+  const owedAmount = (owed.data as bigint | undefined) ?? 0n;
+  const [isClaiming, setIsClaiming] = useState(false);
+
+  const handleClaim = async () => {
+    if (!bondAddress) return;
+    setIsClaiming(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/hedera/coupons/bonds/${bondAddress}/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holder: row.evmAddress }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to pay what is owed");
+      owed.refetch();
+      onAllocated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to pay what is owed");
+    } finally {
+      setIsClaiming(false);
+    }
+  };
+
   const canAllocate = bondAddress && bondStatus === "CREATED";
 
   // Keeps the input showing the holder's current on-chain allocation while it can still change.
@@ -133,6 +166,17 @@ function InvestorRow({
           Allocated units: {allocated.data !== undefined ? Number(allocated.data) : row.defaultUnits}
         </p>
       )}
+      {owedAmount > 0n && (
+        <div className="investor-owed flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-warning">
+            Owed {formatUnits(owedAmount, stablecoin?.decimals ?? 6)} {stablecoin?.symbol ?? "mUSD"} from a coupon this
+            holder could not receive.
+          </span>
+          <button type="button" className="investor-claim btn btn-xs" disabled={isClaiming} onClick={handleClaim}>
+            {isClaiming ? "Paying…" : "Pay what is owed"}
+          </button>
+        </div>
+      )}
       {error && <p className="text-xs text-error m-0">{error}</p>}
     </div>
   );
@@ -178,8 +222,10 @@ export function PositionsFundingCard({
         ? Number(bond.couponCount) - Number(bond.currentCoupon) + 1
         : 0;
   const hbarNeeded = remainingCoupons * HBAR_RESERVE_PER_COUPON;
-  const hbarHeld = bond ? Number(formatUnits(bond.hbarBalance, 18)) : 0;
-  const hbarMissing = Math.max(0, hbarNeeded - hbarHeld);
+  // null means the balance has not been read, which is not the same as holding none: the
+  // card says so rather than showing a funded bond as empty.
+  const hbarHeld = bond?.hbarBalance != null ? Number(formatUnits(bond.hbarBalance, 18)) : null;
+  const hbarMissing = hbarHeld === null ? null : Math.max(0, hbarNeeded - hbarHeld);
 
   const effectiveFundAmount = fundAmount ?? stablecoinMissingWhole;
 
@@ -236,8 +282,14 @@ export function PositionsFundingCard({
               {stablecoinMissingWhole > 0
                 ? `${stablecoinMissingWhole} ${stablecoin?.symbol ?? "mUSD"}`
                 : "no more stablecoin"}{" "}
-              and {hbarMissing > 0 ? `${hbarMissing.toFixed(2)} HBAR` : "no more HBAR"} · holds{" "}
-              {formatUnits(stablecoinHeld, decimals)} {stablecoin?.symbol ?? "mUSD"} and {hbarHeld.toFixed(2)} HBAR
+              and{" "}
+              {hbarMissing === null
+                ? "an unread amount of HBAR"
+                : hbarMissing > 0
+                  ? `${hbarMissing.toFixed(2)} HBAR`
+                  : "no more HBAR"}{" "}
+              · holds {formatUnits(stablecoinHeld, decimals)} {stablecoin?.symbol ?? "mUSD"} and{" "}
+              {hbarHeld === null ? "an HBAR balance that could not be read" : `${hbarHeld.toFixed(2)} HBAR`}
             </p>
             <div className="flex items-center gap-2">
               <div className="flex flex-col">

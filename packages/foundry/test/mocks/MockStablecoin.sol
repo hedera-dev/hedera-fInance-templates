@@ -15,6 +15,25 @@ contract MockStablecoin is ERC20 {
         return _customDecimals;
     }
 
+    /// Accounts whose transfers revert, as an HTS token does for an unassociated account.
+    mapping(address => bool) public rejecting;
+    /// Accounts whose transfers return false rather than reverting.
+    mapping(address => bool) public refusing;
+
+    function setRejecting(address account, bool value) external {
+        rejecting[account] = value;
+    }
+
+    function setRefusing(address account, bool value) external {
+        refusing[account] = value;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (rejecting[to]) revert("TOKEN_NOT_ASSOCIATED_TO_ACCOUNT");
+        if (refusing[to]) return false;
+        return super.transfer(to, amount);
+    }
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IHRC719 } from "hedera-forking/IHRC719.sol";
 import { IHederaScheduleService } from "./interfaces/IHederaScheduleService.sol";
@@ -12,7 +13,7 @@ import { IHederaScheduleService } from "./interfaces/IHederaScheduleService.sol"
 /// back, which pays every holder in an HTS stablecoin and schedules the next coupon itself.
 /// The last coupon also repays principal and schedules nothing further. No keeper, bot or
 /// off-chain automation is involved.
-contract CouponBond is Ownable {
+contract CouponBond is Ownable, ReentrancyGuard {
     enum Status {
         CREATED,
         RUNNING,
@@ -32,6 +33,8 @@ contract CouponBond is Ownable {
     /// Seconds added to a schedule's requested expiry over its nominal due time; see `_schedule`.
     uint256 public constant SCHEDULE_FIRING_MARGIN = 3;
     int64 private constant HSS_SUCCESS = 22;
+    /// The same SUCCESS code, as the HIP-719 facade returns it.
+    uint256 private constant HTS_SUCCESS = 22;
 
     IHederaScheduleService private constant HSS = IHederaScheduleService(address(uint160(0x16b)));
 
@@ -55,6 +58,10 @@ contract CouponBond is Ownable {
 
     address[] public holders;
     mapping(address => uint256) public unitsOf;
+    /// @notice Coupon money a holder could not be sent, kept for them to claim.
+    mapping(address => uint256) public unpaidOf;
+    /// @notice Everything owed across all holders, so funding guidance still adds up.
+    uint256 public totalUnpaid;
 
     event Allocated(address indexed holder, uint256 units);
     event Started(uint256 dueTime);
@@ -64,6 +71,8 @@ contract CouponBond is Ownable {
     event CouponMissed(uint256 indexed coupon);
     event PrincipalRepaid(uint256 indexed coupon, uint256 totalPaid);
     event Stopped();
+    event CouponUnpaid(uint256 indexed coupon, address indexed holder, uint256 amount);
+    event Claimed(address indexed holder, uint256 amount);
 
     error NotCreated();
     error NotRunning();
@@ -74,6 +83,7 @@ contract CouponBond is Ownable {
     error TransferFailed();
     error AssociateFailed(uint256 responseCode);
     error DeleteScheduleFailed(int64 responseCode);
+    error NothingToClaim();
 
     constructor(
         address issuer,
@@ -93,7 +103,7 @@ contract CouponBond is Ownable {
         tokenScale = 10 ** stablecoin.decimals();
 
         uint256 rc = IHRC719(stablecoin_).associate();
-        if (rc != 22) revert AssociateFailed(rc);
+        if (rc != HTS_SUCCESS) revert AssociateFailed(rc);
     }
 
     /// Accepts HBAR so it can pay for its own scheduled calls (see `scheduleCall` in
@@ -136,7 +146,7 @@ contract CouponBond is Ownable {
 
     /// @notice Pays the current coupon and schedules the next one. Called by the Hedera
     /// Schedule Service at the due time, but may be called by anyone (e.g. `#pay-now`) once due.
-    function payCoupon() external {
+    function payCoupon() external nonReentrant {
         if (status != Status.RUNNING) revert NotRunning();
         if (block.timestamp < dueTime) revert NotDue();
 
@@ -153,29 +163,69 @@ contract CouponBond is Ownable {
             totalNeeded += amt;
         }
 
-        if (stablecoin.balanceOf(address(this)) < totalNeeded) {
+        if (stablecoin.balanceOf(address(this)) < totalNeeded + totalUnpaid) {
             emit CouponMissed(coupon);
-            _schedule(block.timestamp + periodSeconds);
+            // One period after this coupon was *due*, not one period after the attempt:
+            // retrying from `block.timestamp` would push every later coupon out with it.
+            uint256 retryAt = dueTime + periodSeconds;
+            if (retryAt <= block.timestamp) retryAt = block.timestamp + 1;
+            _schedule(retryAt);
             return;
         }
 
         // Capture before `_schedule` overwrites `dueTime` for the next coupon.
         uint256 nextDue = dueTime + periodSeconds;
-        uint256 totalPaid;
-        for (uint256 i = 0; i < n; i++) {
-            if (amounts[i] == 0) continue;
-            if (!stablecoin.transfer(holders[i], amounts[i])) revert TransferFailed();
-            totalPaid += amounts[i];
-        }
 
+        // The coupon advances before a single token is moved. `stablecoin` is whatever this
+        // bond was built with, so a transfer below is a call out to code this contract does
+        // not control, and it must not be able to find the bond mid-coupon.
         if (isLast) {
             status = Status.MATURED;
             currentSchedule = address(0);
-            emit PrincipalRepaid(coupon, totalPaid);
         } else {
             currentCoupon = coupon + 1;
+        }
+
+        uint256 totalPaid;
+        for (uint256 i = 0; i < n; i++) {
+            if (amounts[i] == 0) continue;
+            if (_tryPay(holders[i], amounts[i])) {
+                totalPaid += amounts[i];
+            } else {
+                // A holder who cannot receive the token — unassociated, frozen — is not
+                // allowed to take the bond down with them. Their money is kept, everyone
+                // else is paid, and the next coupon is still scheduled.
+                unpaidOf[holders[i]] += amounts[i];
+                totalUnpaid += amounts[i];
+                emit CouponUnpaid(coupon, holders[i], amounts[i]);
+            }
+        }
+
+        if (isLast) {
+            emit PrincipalRepaid(coupon, totalPaid);
+        } else {
             emit CouponPaid(coupon, totalPaid);
             _schedule(nextDue);
+        }
+    }
+
+    /// @notice Sends a holder what an earlier coupon could not deliver. Callable by anyone;
+    /// the money always goes to the holder, so the desk can trigger it on their behalf.
+    function claimFor(address holder) external nonReentrant {
+        uint256 amount = unpaidOf[holder];
+        if (amount == 0) revert NothingToClaim();
+        unpaidOf[holder] = 0;
+        totalUnpaid -= amount;
+        if (!stablecoin.transfer(holder, amount)) revert TransferFailed();
+        emit Claimed(holder, amount);
+    }
+
+    /// A transfer that reverts and one that returns false are the same answer: not paid.
+    function _tryPay(address holder, uint256 amount) internal returns (bool) {
+        try stablecoin.transfer(holder, amount) returns (bool ok) {
+            return ok;
+        } catch {
+            return false;
         }
     }
 
@@ -197,13 +247,14 @@ contract CouponBond is Ownable {
 
     /// @notice Total stablecoin still needed to fully pay every remaining coupon and principal.
     function stablecoinNeeded() external view returns (uint256) {
-        // Once matured or stopped, nothing more is ever paid -- including principal, already repaid at maturity.
-        if (status == Status.MATURED || status == Status.STOPPED) return 0;
+        // Once matured or stopped nothing further is scheduled, but money a holder could not
+        // be sent is still owed to them.
+        if (status == Status.MATURED || status == Status.STOPPED) return totalUnpaid;
 
         uint256 remaining =
             status == Status.CREATED ? couponCount : (couponCount >= currentCoupon ? couponCount - currentCoupon + 1 : 0);
         uint256 n = holders.length;
-        uint256 total;
+        uint256 total = totalUnpaid;
         for (uint256 i = 0; i < n; i++) {
             uint256 units = unitsOf[holders[i]];
             total += _couponAmount(units) * remaining + _principalAmount(units);

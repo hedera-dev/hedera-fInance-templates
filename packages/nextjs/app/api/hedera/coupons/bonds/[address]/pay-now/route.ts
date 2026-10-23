@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { callBond, getOperatorConfigError } from "~~/services/coupons/operator";
+import { requireKnownBond } from "~~/services/coupons/state";
 import { couponBondAbi } from "~~/utils/coupons/abi";
 
 /**
@@ -11,8 +12,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ addres
   if (configError) return NextResponse.json({ error: configError }, { status: 400 });
 
   const { address } = await params;
+  let bondAddress: `0x${string}`;
   try {
-    const hash = await callBond(address as `0x${string}`, couponBondAbi, "payCoupon");
+    bondAddress = requireKnownBond(address);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown bond" }, { status: 400 });
+  }
+
+  try {
+    const hash = await callBond(bondAddress, couponBondAbi, "payCoupon");
     return NextResponse.json({ txHash: hash });
   } catch (e) {
     console.error("[api/hedera/coupons/bonds/[address]/pay-now]", e);

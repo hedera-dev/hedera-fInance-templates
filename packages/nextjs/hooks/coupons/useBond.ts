@@ -18,7 +18,8 @@ export type BondData = {
   holdersCount: number;
   stablecoinNeeded: bigint;
   stablecoinAddress: `0x${string}`;
-  hbarBalance: bigint;
+  /** null while the balance has not been read; never silently 0. */
+  hbarBalance: bigint | null;
 };
 
 const fields = [
@@ -101,7 +102,9 @@ export function useBond(address?: `0x${string}`) {
     holdersCount: Number(holdersCount),
     stablecoinNeeded,
     stablecoinAddress,
-    hbarBalance: balance?.value ?? 0n,
+    // `undefined` means not read yet, or the read failed. Reporting 0 for that told the
+    // page an unfunded bond, which is what the Start gate reads.
+    hbarBalance: balance?.value ?? null,
   };
 
   return { isLoading, data: bondData, refetch: refetchAll };

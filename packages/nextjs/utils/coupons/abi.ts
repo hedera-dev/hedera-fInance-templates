@@ -132,6 +132,27 @@ export const couponBondAbi = [
   },
   {
     type: "function",
+    stateMutability: "view",
+    name: "unpaidOf",
+    inputs: [{ name: "holder", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    stateMutability: "view",
+    name: "totalUnpaid",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "claimFor",
+    inputs: [{ name: "holder", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "stablecoinNeeded",
     stateMutability: "view",
     inputs: [],
@@ -191,6 +212,25 @@ export const couponBondAbi = [
     inputs: [
       { name: "coupon", type: "uint256", indexed: true },
       { name: "totalPaid", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "CouponUnpaid",
+    anonymous: false,
+    inputs: [
+      { name: "coupon", type: "uint256", indexed: true },
+      { name: "holder", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Claimed",
+    anonymous: false,
+    inputs: [
+      { name: "holder", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
     ],
   },
   {

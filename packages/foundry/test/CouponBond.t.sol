@@ -266,4 +266,110 @@ contract CouponBondTest is Test {
         assertEq(bond.owner(), issuer);
         assertEq(bondAddr.balance, 1 ether);
     }
+
+    /**
+     * The failure this exists for. A holder who has not associated the token cannot be sent
+     * it, and the transfer reverts. Reverting the whole coupon took the bond with it: the
+     * scheduled call failed, nothing rescheduled it, `payCoupon` reverted from then on, and
+     * every other holder's money stayed in the contract with no way out.
+     */
+    function test_HolderWhoCannotReceiveDoesNotStopTheBond() public {
+        CouponBond bond = _newBond();
+        _allocateBoth(bond, 10, 5);
+        _fund(bond, 15300);
+        _start(bond);
+
+        token.setRejecting(investorB, true);
+
+        uint256 due = bond.dueTime();
+        vm.warp(due);
+        bond.payCoupon();
+
+        assertEq(token.balanceOf(investorA), 100 * SCALE, "the holder who can receive is paid");
+        assertEq(token.balanceOf(investorB), 0, "the one who cannot is not");
+        assertEq(bond.unpaidOf(investorB), 50 * SCALE, "and is owed it instead");
+        assertEq(bond.totalUnpaid(), 50 * SCALE);
+
+        assertEq(bond.currentCoupon(), 2, "the coupon still advances");
+        assertEq(bond.dueTime(), due + PERIOD, "and the next one is still scheduled");
+        assertTrue(bond.currentSchedule() != address(0));
+    }
+
+    /** A transfer that returns false rather than reverting is the same answer: not paid. */
+    function test_ATransferThatReturnsFalseIsAlsoRecorded() public {
+        CouponBond bond = _newBond();
+        _allocateBoth(bond, 10, 5);
+        _fund(bond, 15300);
+        _start(bond);
+
+        token.setRefusing(investorB, true);
+        vm.warp(bond.dueTime());
+        bond.payCoupon();
+
+        assertEq(bond.unpaidOf(investorB), 50 * SCALE);
+        assertEq(bond.currentCoupon(), 2);
+    }
+
+    function test_UnpaidCouponIsClaimableOnceTheHolderCanReceive() public {
+        CouponBond bond = _newBond();
+        _allocateBoth(bond, 10, 5);
+        _fund(bond, 15300);
+        _start(bond);
+
+        token.setRejecting(investorB, true);
+        vm.warp(bond.dueTime());
+        bond.payCoupon();
+
+        // Still owed while the holder cannot receive, and the claim says so rather than
+        // quietly succeeding.
+        vm.expectRevert();
+        bond.claimFor(investorB);
+
+        token.setRejecting(investorB, false);
+        bond.claimFor(investorB);
+
+        assertEq(token.balanceOf(investorB), 50 * SCALE, "paid on the claim");
+        assertEq(bond.unpaidOf(investorB), 0);
+        assertEq(bond.totalUnpaid(), 0);
+
+        vm.expectRevert(CouponBond.NothingToClaim.selector);
+        bond.claimFor(investorB);
+    }
+
+    /**
+     * A missed coupon is retried one period after it was *due*. Retrying one period after the
+     * attempt drifts every later coupon by however late the attempt was, and a bond's coupon
+     * dates are not negotiable. Warps past the due time, which is the only way to tell the
+     * two apart.
+     */
+    function test_MissedCouponKeepsTheOriginalCadence() public {
+        CouponBond bond = _newBond();
+        _allocateBoth(bond, 10, 0);
+        _start(bond);
+
+        uint256 due = bond.dueTime();
+        vm.warp(due + 37); // the schedule fired late, or pay-now was pressed late
+        bond.payCoupon();
+
+        assertEq(bond.currentCoupon(), 1, "still the same coupon");
+        assertEq(bond.dueTime(), due + PERIOD, "the cadence is kept, not restarted from now");
+    }
+
+    /** What is owed is still owed after maturity, and funding guidance has to include it. */
+    function test_StablecoinNeededIncludesWhatCouldNotBePaid() public {
+        CouponBond bond = _newBond();
+        _allocateBoth(bond, 10, 5);
+        _fund(bond, 15300);
+        _start(bond);
+
+        token.setRejecting(investorB, true);
+        vm.warp(bond.dueTime());
+        bond.payCoupon();
+        vm.warp(bond.dueTime());
+        bond.payCoupon(); // last coupon plus principal; B still cannot receive
+
+        assertEq(uint256(bond.status()), uint256(CouponBond.Status.MATURED));
+        assertEq(bond.stablecoinNeeded(), bond.totalUnpaid(), "matured, but still owed");
+        assertGt(bond.totalUnpaid(), 0);
+    }
 }

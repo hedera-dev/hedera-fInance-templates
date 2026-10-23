@@ -7,9 +7,9 @@ import {
   getOperatorWalletClient,
   getServerPublicClient,
 } from "~~/services/coupons/operator";
-import { getDeskState } from "~~/services/coupons/state";
+import { getDeskState, requireKnownBond } from "~~/services/coupons/state";
 import { couponBondAbi, erc20Abi } from "~~/utils/coupons/abi";
-import { HBAR_RESERVE_PER_COUPON } from "~~/utils/coupons/constants";
+import { HBAR_RESERVE_PER_COUPON, MAX_FUNDING_WHOLE } from "~~/utils/coupons/constants";
 
 /**
  * Sends the bond the stablecoin it still needs plus whatever HBAR it is still missing to pay
@@ -24,7 +24,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ address
   if (!stablecoin) return NextResponse.json({ error: "The stablecoin has not been created yet" }, { status: 400 });
 
   const { address } = await params;
-  const bondAddress = address as `0x${string}`;
+  let bondAddress: `0x${string}`;
+  try {
+    bondAddress = requireKnownBond(address);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown bond" }, { status: 400 });
+  }
 
   let body: { stablecoinWhole?: number };
   try {
@@ -33,8 +38,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ address
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   const stablecoinWhole = body.stablecoinWhole ?? 0;
-  if (!Number.isInteger(stablecoinWhole) || stablecoinWhole < 0) {
-    return NextResponse.json({ error: "Stablecoin amount must be a non-negative whole number" }, { status: 400 });
+  if (!Number.isInteger(stablecoinWhole) || stablecoinWhole < 0 || stablecoinWhole > MAX_FUNDING_WHOLE) {
+    return NextResponse.json(
+      { error: `Stablecoin amount must be a whole number between 0 and ${MAX_FUNDING_WHOLE}` },
+      { status: 400 },
+    );
   }
 
   try {

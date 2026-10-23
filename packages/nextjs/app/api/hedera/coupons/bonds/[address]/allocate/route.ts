@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { callBond, getOperatorConfigError } from "~~/services/coupons/operator";
+import { requireKnownBond } from "~~/services/coupons/state";
 import { couponBondAbi } from "~~/utils/coupons/abi";
 
 /** Sets a holder's allocated units on the bond. Issuer-only on-chain; signed here with the operator key. */
@@ -8,6 +9,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ address
   if (configError) return NextResponse.json({ error: configError }, { status: 400 });
 
   const { address } = await params;
+  let bondAddress: `0x${string}`;
+  try {
+    bondAddress = requireKnownBond(address);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown bond" }, { status: 400 });
+  }
+
   let body: { holder?: string; units?: number };
   try {
     body = await req.json();
@@ -25,7 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ address
   }
 
   try {
-    const hash = await callBond(address as `0x${string}`, couponBondAbi, "allocate", [
+    const hash = await callBond(bondAddress, couponBondAbi, "allocate", [
       holder as `0x${string}`,
       BigInt(units as number),
     ]);
