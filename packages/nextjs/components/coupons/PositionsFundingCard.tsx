@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { hederaTestnet } from "viem/chains";
 import { useReadContract } from "wagmi";
@@ -9,6 +9,7 @@ import { useMirrorAccount } from "~~/hooks/coupons/useMirrorAccount";
 import type { DemoInvestor, Stablecoin } from "~~/services/coupons/state";
 import { couponBondAbi } from "~~/utils/coupons/abi";
 import { HBAR_RESERVE_PER_COUPON } from "~~/utils/coupons/constants";
+import { wholeNumberText } from "~~/utils/coupons/numberField";
 import { getBlockExplorerAddressLink } from "~~/utils/scaffold-hbar";
 
 type Row = { key: string; label: string; evmAddress: `0x${string}`; defaultUnits: number };
@@ -36,12 +37,11 @@ function InvestorRow({
   onAllocated: () => void;
 }) {
   const mirror = useMirrorAccount(row.evmAddress, stablecoin?.tokenId);
-  const [units, setUnits] = useState(row.defaultUnits);
+  const [unitsText, setUnitsText] = useState(String(row.defaultUnits));
   const [isAllocating, setIsAllocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The units actually allocated on-chain so far, for display once allocation is locked in
-  // (bond running/matured/stopped) rather than the form's pre-fill default.
+  // On-chain allocation, shown while the bond can still be edited so Allocate has a visible result.
   const allocated = useReadContract({
     address: bondAddress,
     abi: couponBondAbi,
@@ -84,14 +84,10 @@ function InvestorRow({
   };
 
   const canAllocate = bondAddress && bondStatus === "CREATED";
-
-  // Keeps the input showing the holder's current on-chain allocation while it can still change.
-  useEffect(() => {
-    if (canAllocate && allocated.data !== undefined) setUnits(Number(allocated.data));
-  }, [canAllocate, allocated.data]);
+  const units = unitsText === "" ? null : Math.max(0, Math.round(Number(unitsText)));
 
   const handleAllocate = async () => {
-    if (!bondAddress) return;
+    if (!bondAddress || units === null || Number.isNaN(units)) return;
     setIsAllocating(true);
     setError(null);
     try {
@@ -119,13 +115,13 @@ function InvestorRow({
       data-address={row.evmAddress}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <p className="font-semibold m-0">{row.label}</p>
           <a
             href={getBlockExplorerAddressLink(hederaTestnet, row.evmAddress)}
             target="_blank"
             rel="noreferrer"
-            className="link text-xs no-underline hover:underline"
+            className="link text-xs break-all block no-underline hover:underline"
           >
             {row.evmAddress}
           </a>
@@ -138,33 +134,33 @@ function InvestorRow({
           <p className="font-mono m-0">{balance ?? "0"}</p>
         </div>
       </div>
-      {canAllocate ? (
+      {bondAddress && (
+        <p className="text-xs text-base-content/60 m-0">
+          Allocated units: {allocated.data !== undefined ? Number(allocated.data) : "…"}
+        </p>
+      )}
+      {canAllocate && (
         <div className="flex items-center gap-2">
           <label className="text-xs text-base-content/60" htmlFor={`units-${row.key}`}>
             Units
           </label>
           <input
             id={`units-${row.key}`}
-            type="number"
-            min={0}
-            step={1}
+            type="text"
+            inputMode="numeric"
             className="investor-units input input-bordered input-sm w-24"
-            value={units}
-            onChange={e => setUnits(Math.max(0, Math.round(Number(e.target.value))))}
+            value={unitsText}
+            onChange={e => setUnitsText(wholeNumberText(e.target.value))}
           />
           <button
             type="button"
             className="investor-allocate btn btn-sm btn-primary"
-            disabled={isAllocating}
+            disabled={isAllocating || units === null || Number.isNaN(units)}
             onClick={handleAllocate}
           >
             {isAllocating ? "Allocating…" : "Allocate"}
           </button>
         </div>
-      ) : (
-        <p className="text-xs text-base-content/60 m-0">
-          Allocated units: {allocated.data !== undefined ? Number(allocated.data) : row.defaultUnits}
-        </p>
       )}
       {owedAmount > 0n && (
         <div className="investor-owed flex flex-wrap items-center gap-2 text-xs">
@@ -205,7 +201,7 @@ export function PositionsFundingCard({
   }, [investors, walletInvestor]);
 
   const bondMirror = useMirrorAccount(bondAddress, stablecoin?.tokenId);
-  const [fundAmount, setFundAmount] = useState<number | undefined>(undefined);
+  const [fundText, setFundText] = useState<string | null>(null);
   const [isFunding, setIsFunding] = useState(false);
   const [fundError, setFundError] = useState<string | null>(null);
 
@@ -227,7 +223,8 @@ export function PositionsFundingCard({
   const hbarHeld = bond?.hbarBalance != null ? Number(formatUnits(bond.hbarBalance, 18)) : null;
   const hbarMissing = hbarHeld === null ? null : Math.max(0, hbarNeeded - hbarHeld);
 
-  const effectiveFundAmount = fundAmount ?? stablecoinMissingWhole;
+  const fundField = fundText ?? String(stablecoinMissingWhole);
+  const fundWhole = fundField === "" ? null : Math.max(0, Math.round(Number(fundField)));
 
   const handleFund = async () => {
     if (!bondAddress) return;
@@ -237,13 +234,13 @@ export function PositionsFundingCard({
       const res = await fetch(`/api/hedera/coupons/bonds/${bondAddress}/fund`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stablecoinWhole: effectiveFundAmount }),
+        body: JSON.stringify({ stablecoinWhole: fundWhole ?? 0 }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to fund bond");
       onRefetchBond();
       bondMirror.refetch();
-      setFundAmount(undefined);
+      setFundText(null);
     } catch (e) {
       setFundError(e instanceof Error ? e.message : "Failed to fund bond");
     } finally {
@@ -253,7 +250,7 @@ export function PositionsFundingCard({
 
   return (
     <div className="card bg-base-100 shadow border border-base-300">
-      <div className="card-body gap-4">
+      <div className="card-body gap-2 !p-4">
         <div>
           <h3 className="card-title text-base">Positions and funding</h3>
           <p className="text-sm text-base-content/70 m-0">
@@ -298,19 +295,18 @@ export function PositionsFundingCard({
                 </label>
                 <input
                   id="fund-amount"
-                  type="number"
-                  min={0}
-                  step={1}
+                  type="text"
+                  inputMode="numeric"
                   className="input input-bordered input-sm w-32"
-                  value={effectiveFundAmount}
-                  onChange={e => setFundAmount(Math.max(0, Math.round(Number(e.target.value))))}
+                  value={fundField}
+                  onChange={e => setFundText(wholeNumberText(e.target.value))}
                 />
               </div>
               <button
                 id="fund-bond"
                 type="button"
                 className="btn btn-secondary btn-sm self-end"
-                disabled={isFunding}
+                disabled={isFunding || fundWhole === null || Number.isNaN(fundWhole)}
                 onClick={handleFund}
               >
                 {isFunding ? "Funding…" : "Fund bond"}

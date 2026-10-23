@@ -68,12 +68,14 @@ export function SetupCard({ desk, onDone }: { desk: DeskStateResponse | undefine
 
   return (
     <div className="card bg-base-100 shadow border border-base-300">
-      <div className="card-body gap-3">
+      <div className="card-body gap-2 !p-4">
         <div>
           <h3 className="card-title text-base">Set up desk</h3>
-          <p className="text-sm text-base-content/70 m-0">
-            Creates the stablecoin coupons are paid in and the two demo investors who will hold positions.
-          </p>
+          {!(stablecoinStep.status === "done" && investorsStep.status === "done") && (
+            <p className="text-sm text-base-content/70 m-0">
+              Creates the stablecoin coupons are paid in and the two demo investors who will hold positions.
+            </p>
+          )}
         </div>
 
         {desk?.configError && (
@@ -94,7 +96,7 @@ export function SetupCard({ desk, onDone }: { desk: DeskStateResponse | undefine
               href={getBlockExplorerAddressLink(hederaTestnet, desk.factory.address)}
               target="_blank"
               rel="noreferrer"
-              className="link font-mono text-xs no-underline hover:underline"
+              className="link font-mono text-xs break-all no-underline hover:underline"
             >
               {desk.factory.address}
             </a>
@@ -109,7 +111,9 @@ export function SetupCard({ desk, onDone }: { desk: DeskStateResponse | undefine
         <button
           id="setup-desk"
           type="button"
-          className="btn btn-primary btn-sm self-start"
+          className={`btn btn-primary btn-sm self-start ${
+            stablecoinStep.status === "done" && investorsStep.status === "done" ? "hidden" : ""
+          }`}
           disabled={
             running ||
             Boolean(desk?.configError) ||

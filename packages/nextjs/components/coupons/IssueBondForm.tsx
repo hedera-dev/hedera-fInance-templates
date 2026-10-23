@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { DeskStateResponse } from "~~/hooks/coupons/useDeskState";
+import { decimalText, wholeNumberText } from "~~/utils/coupons/numberField";
 
 type Props = {
   desk: DeskStateResponse | undefined;
@@ -10,14 +11,17 @@ type Props = {
 
 export function IssueBondForm({ desk, onIssued }: Props) {
   const [name, setName] = useState("Acme Coupon Bond");
-  const [faceValue, setFaceValue] = useState(1000);
-  const [couponRate, setCouponRate] = useState(1);
-  const [periodMinutes, setPeriodMinutes] = useState(2);
-  const [couponCount, setCouponCount] = useState(3);
+  const [faceValue, setFaceValue] = useState("1000");
+  const [couponRate, setCouponRate] = useState("1");
+  const [periodMinutes, setPeriodMinutes] = useState("2");
+  const [couponCount, setCouponCount] = useState("3");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const disabled = !desk?.factory || Boolean(desk?.configError) || !desk?.stablecoin;
+  const termsComplete = [faceValue, couponRate, periodMinutes, couponCount].every(
+    value => value !== "" && value !== "." && Number.isFinite(Number(value)),
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,10 +33,10 @@ export function IssueBondForm({ desk, onIssued }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
-          faceValue,
-          couponRatePercent: couponRate,
-          periodMinutes,
-          couponCount,
+          faceValue: Number(faceValue),
+          couponRatePercent: Number(couponRate),
+          periodMinutes: Number(periodMinutes),
+          couponCount: Number(couponCount),
         }),
       });
       const body = await res.json();
@@ -47,7 +51,7 @@ export function IssueBondForm({ desk, onIssued }: Props) {
 
   return (
     <form className="card bg-base-100 shadow border border-base-300" onSubmit={handleSubmit}>
-      <div className="card-body gap-3">
+      <div className="card-body gap-2 !p-4">
         <div>
           <h3 className="card-title text-base">Issue a bond</h3>
           <p className="text-sm text-base-content/70 m-0">Set its terms and issue it through the factory.</p>
@@ -74,12 +78,11 @@ export function IssueBondForm({ desk, onIssued }: Props) {
             </label>
             <input
               id="bond-face-value"
-              type="number"
-              min={1}
-              step={1}
+              type="text"
+              inputMode="numeric"
               className="input input-bordered input-sm"
               value={faceValue}
-              onChange={e => setFaceValue(Math.max(1, Math.round(Number(e.target.value))))}
+              onChange={e => setFaceValue(wholeNumberText(e.target.value))}
               disabled={disabled}
             />
           </div>
@@ -89,13 +92,11 @@ export function IssueBondForm({ desk, onIssued }: Props) {
             </label>
             <input
               id="bond-coupon-rate"
-              type="number"
-              min={0.01}
-              max={20}
-              step={0.01}
+              type="text"
+              inputMode="decimal"
               className="input input-bordered input-sm"
               value={couponRate}
-              onChange={e => setCouponRate(Number(e.target.value))}
+              onChange={e => setCouponRate(decimalText(e.target.value))}
               disabled={disabled}
             />
           </div>
@@ -105,13 +106,11 @@ export function IssueBondForm({ desk, onIssued }: Props) {
             </label>
             <input
               id="bond-period-minutes"
-              type="number"
-              min={1}
-              max={60}
-              step={1}
+              type="text"
+              inputMode="numeric"
               className="input input-bordered input-sm"
               value={periodMinutes}
-              onChange={e => setPeriodMinutes(Math.min(60, Math.max(1, Math.round(Number(e.target.value)))))}
+              onChange={e => setPeriodMinutes(wholeNumberText(e.target.value))}
               disabled={disabled}
             />
           </div>
@@ -121,13 +120,11 @@ export function IssueBondForm({ desk, onIssued }: Props) {
             </label>
             <input
               id="bond-coupon-count"
-              type="number"
-              min={1}
-              max={12}
-              step={1}
+              type="text"
+              inputMode="numeric"
               className="input input-bordered input-sm"
               value={couponCount}
-              onChange={e => setCouponCount(Math.min(12, Math.max(1, Math.round(Number(e.target.value)))))}
+              onChange={e => setCouponCount(wholeNumberText(e.target.value))}
               disabled={disabled}
             />
           </div>
@@ -140,7 +137,7 @@ export function IssueBondForm({ desk, onIssued }: Props) {
           id="issue-bond"
           type="submit"
           className="btn btn-primary btn-sm self-start"
-          disabled={disabled || isSubmitting}
+          disabled={disabled || isSubmitting || !termsComplete}
         >
           {isSubmitting ? "Issuing…" : "Issue bond"}
         </button>

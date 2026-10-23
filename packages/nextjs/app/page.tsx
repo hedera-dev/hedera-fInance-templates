@@ -27,22 +27,18 @@ const Home: NextPage = () => {
   }, [isConnected]);
 
   return (
-    <div className="flex flex-col grow">
-      <div className="hedera-gradient dark:bg-none dark:bg-hedera-charcoal w-full py-10 px-5">
-        <div className="max-w-5xl mx-auto flex flex-col gap-2 text-white">
-          <h1 className="text-2xl font-bold m-0">Coupon bonds that pay themselves</h1>
-          <p className="max-w-3xl text-sm text-white/90 m-0">
-            A bond coupon is a periodic interest payment. Usually something off-chain has to trigger it -- a paying
-            agent, or on other chains a keeper network such as Chainlink Automation. Here the bond schedules its own
-            payments through the Hedera Schedule Service (HIP-1215): once started, the contract calls itself back at
-            every coupon date, pays every holder in an HTS stablecoin, and schedules its own next coupon. No keeper,
-            bot, cron job or off-chain automation is involved.
-          </p>
-        </div>
+    <div className="w-full max-w-6xl mx-auto px-4 py-6 flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-bold m-0">Coupon bonds that pay themselves</h1>
+        <p className="text-sm text-base-content/70 m-0 max-w-3xl">
+          A coupon is the interest a bond pays on a schedule. Usually a paying agent, or a keeper such as Chainlink
+          Automation, has to send it. Here the bond schedules its own payments through the Hedera Schedule Service: once
+          started, it pays every holder in a stablecoin and books the next coupon itself.
+        </p>
       </div>
 
-      <div className="max-w-5xl mx-auto w-full px-5 py-8 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className="flex flex-col gap-4">
           <SetupCard desk={desk.data} onDone={() => desk.refetch()} />
           <IssueBondForm
             desk={desk.data}
@@ -59,23 +55,14 @@ const Home: NextPage = () => {
             stablecoin={desk.data?.stablecoin}
             onRefetchBond={bond.refetch}
           />
-          <ScheduleControlsCard bondAddress={bondAddress} bond={bond.data} onRefetchBond={bond.refetch} />
-          <WalletInvestorCard
-            stablecoin={desk.data?.stablecoin}
-            walletInvestor={walletInvestor}
-            onAdd={addr => setWalletInvestor({ evmAddress: addr })}
-          />
         </div>
 
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
           {bondAddress ? (
-            <>
-              <BondOverviewCard bondAddress={bondAddress} bond={bond.data} />
-              <CouponHistoryCard bondAddress={bondAddress} stablecoinDecimals={desk.data?.stablecoin?.decimals ?? 6} />
-            </>
+            <BondOverviewCard bondAddress={bondAddress} bond={bond.data} />
           ) : (
             <div className="card bg-base-100 shadow border border-base-300">
-              <div className="card-body gap-2">
+              <div className="card-body gap-2 !p-4">
                 <h3 className="card-title text-base">Nothing issued yet</h3>
                 <p className="text-sm text-base-content/70 m-0">
                   Once you issue a bond, its terms, status, schedule and coupon history will appear here, read live from
@@ -83,6 +70,15 @@ const Home: NextPage = () => {
                 </p>
               </div>
             </div>
+          )}
+          <ScheduleControlsCard bondAddress={bondAddress} bond={bond.data} onRefetchBond={bond.refetch} />
+          <WalletInvestorCard
+            stablecoin={desk.data?.stablecoin}
+            walletInvestor={walletInvestor}
+            onAdd={addr => setWalletInvestor({ evmAddress: addr })}
+          />
+          {bondAddress && (
+            <CouponHistoryCard bondAddress={bondAddress} stablecoinDecimals={desk.data?.stablecoin?.decimals ?? 6} />
           )}
         </div>
       </div>

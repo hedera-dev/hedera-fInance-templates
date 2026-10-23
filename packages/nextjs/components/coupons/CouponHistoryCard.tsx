@@ -15,7 +15,7 @@ export function CouponHistoryCard({ bondAddress, stablecoinDecimals }: Props) {
 
   return (
     <div className="card bg-base-100 shadow border border-base-300">
-      <div className="card-body gap-3">
+      <div className="card-body gap-2 !p-4">
         <div>
           <h3 className="card-title text-base">Coupon history</h3>
           <p className="text-sm text-base-content/70 m-0">
