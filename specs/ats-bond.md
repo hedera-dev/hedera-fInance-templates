@@ -182,8 +182,8 @@ described.
   else deploying through it in between changes the address, which turned a
   successful deployment into a failed run and abandoned a bond that had just been
   paid for. The simulation is still run first — it is how a refusal is decoded
-  before a transaction is sent — and the prediction is only a fallback for a
-  receipt with no event in it.
+  before a transaction is sent — and its predicted address is only the fallback
+  below.
 - Every route is unauthenticated, and `POST /api/hedera/bond/activity` lets the
   browser write any activity row it likes — it exists because the wallet's
   transfer is signed client-side, so only the browser knows the outcome. Both are
@@ -219,9 +219,11 @@ described.
     additionalSecurityData)`; use `1` (REG_S) and `0`
   - compliance and identity registry are the zero address; external lists empty;
     `isWhiteList` true; `isControllable` true; the rest false
-- The factory's `BondDeployed` event indexes only the deployer: take the bond
-  address from a `staticCall` of the same `deployBond` made just before sending
-  it, and confirm the sent transaction emitted logs from that address.
+- The factory's `BondDeployed` event indexes only the deployer, so the bond
+  address cannot be filtered out of the logs. It is still in the event data:
+  decode the factory's logs in the receipt. A receipt with no `BondDeployed`
+  event may use the address from that pre-send simulation only when the receipt
+  also contains logs emitted by that address; otherwise the run fails.
 - Roles granted in `rbacs` at deployment, all to the issuer:
   `DEFAULT_ADMIN_ROLE` (`0x00…00`),
   issuer role `0x5eeaf5602c75bf26e73b5206d0bd6ee82f621166255e5fd73cc06bc7bd84a95f`,
