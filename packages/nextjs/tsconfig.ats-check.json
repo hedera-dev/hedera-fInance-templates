@@ -8,5 +8,10 @@
     "incremental": false,
     "plugins": []
   },
-  "include": ["utils/ats/isin.ts", "utils/ats/dates.ts", "tests/atsBond.test.ts"]
+  "include": [
+    "utils/ats/isin.ts",
+    "utils/ats/dates.ts",
+    "services/ats/clients.ts",
+    "tests/atsBond.test.ts"
+  ]
 }

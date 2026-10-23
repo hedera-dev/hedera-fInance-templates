@@ -1,9 +1,11 @@
 /**
- * The two pieces of the issue form that decide what gets signed, exercised without a network.
+ * The decisions the desk makes before anything is signed, exercised without a network: the
+ * ISIN it accepts, the dates it asks the factory for, and which failures are worth retrying.
  *
  * Run with `yarn check-ats` — compiled by tsc and run by node's own test runner, so there is
  * no test framework to install.
  */
+import { isTransientRelayError } from "../services/ats/clients";
 import { START_DELAY_SECONDS, bondDates } from "../utils/ats/dates";
 import { validateIsin } from "../utils/ats/isin";
 import assert from "node:assert/strict";
@@ -52,4 +54,27 @@ test("maturity is always after the start, for every month count the form allows"
     assert.equal(startingDate, BigInt(now + START_DELAY_SECONDS));
     assert.ok(maturityDate > startingDate, `maturity must follow the start at ${months} months`);
   }
+});
+
+/**
+ * The case this exists for: the public relay answered an issue with
+ * `400 {"code":-32000,"message":"… Error occurred during transaction simulation: Service
+ * Unavailable"}`. That is the relay failing to ask, not the contract answering, and ending
+ * the whole issue on it wastes a run. A revert is the opposite: asking again says no again.
+ */
+test("relay trouble is retried; a refusal is not", () => {
+  const unavailable = Object.assign(new Error("HTTP request failed."), {
+    details:
+      '{"code":-32000,"message":"[Request ID: d92c67a2] Error occurred during transaction simulation: Service Unavailable"}',
+  });
+  assert.equal(isTransientRelayError(unavailable), true);
+
+  assert.equal(isTransientRelayError(new Error("fetch failed")), true, "a dead connection is worth another try");
+  assert.equal(isTransientRelayError(new Error("Too Many Requests")), true);
+
+  const refusal = Object.assign(new Error('The contract function "issue" reverted.'), {
+    details: "AccountIsBlocked(0x1234)",
+  });
+  assert.equal(isTransientRelayError(refusal), false, "a revert is an answer, not a failure to ask");
+  assert.equal(isTransientRelayError(new Error("Insufficient funds")), false);
 });

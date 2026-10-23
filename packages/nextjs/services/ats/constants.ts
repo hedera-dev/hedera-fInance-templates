@@ -3,7 +3,11 @@
 // mirror node (see mirror.ts) rather than hardcoded, per the spec.
 import type { Address } from "viem";
 
-export const HASHIO_TESTNET_RPC_URL = "https://testnet.hashio.io/api";
+/**
+ * The JSON-RPC relay. Hashio is public and shared, so it has bad minutes; set `HEDERA_RPC_URL`
+ * to point at another relay (your own, or a provider's) without touching the code.
+ */
+export const HASHIO_TESTNET_RPC_URL = process.env.HEDERA_RPC_URL?.trim() || "https://testnet.hashio.io/api";
 export const MIRROR_NODE_TESTNET_URL = "https://testnet.mirrornode.hedera.com";
 
 export const ATS_FACTORY_CONTRACT_ID = "0.0.9213391";

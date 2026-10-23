@@ -2,7 +2,7 @@
 // on them. Every write simulates first (a plain `eth_call`, no signature, no HBAR spent) so a
 // revert is caught and decoded before a real transaction is ever sent.
 import { bondAbi } from "./abi";
-import { requireOperator } from "./clients";
+import { requireOperator, retryTransient } from "./clients";
 import { GAS_LIMIT_CONTROL_LIST, GAS_LIMIT_FUND_INVESTOR, GAS_LIMIT_ISSUE, INVESTOR_FUNDING_HBAR } from "./constants";
 import { decodeAtsError } from "./errors";
 import { getAccountIdForEvmAddress } from "./mirror";
@@ -44,15 +44,17 @@ async function simulateAndSend(
 ): Promise<WriteOutcome> {
   const operator = requireOperator();
   try {
-    const { request } = await operator.publicClient.simulateContract({
-      address: bondAddress,
-      abi: bondAbi,
-      functionName,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      args: args as any,
-      account: operator.account,
-      gas,
-    });
+    const { request } = await retryTransient(() =>
+      operator.publicClient.simulateContract({
+        address: bondAddress,
+        abi: bondAbi,
+        functionName,
+
+        args: args as any,
+        account: operator.account,
+        gas,
+      }),
+    );
     const txHash = await operator.walletClient.writeContract(request);
     const receipt = await operator.publicClient.waitForTransactionReceipt({ hash: txHash });
     if (receipt.status !== "success") {

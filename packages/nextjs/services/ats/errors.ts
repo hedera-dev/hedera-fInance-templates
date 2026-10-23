@@ -38,7 +38,12 @@ export function decodeAtsError(error: unknown): DecodedAtsError {
       const message = args.length ? `${errorName}(${args.join(", ")})` : errorName;
       return { name: errorName, message };
     }
-    return { name: "Error", message: withCause(error.shortMessage ?? error.message, error) };
+    // viem's own `message` carries the request body and the raw call arguments — thousands
+    // of hex characters — and its cause chain repeats them. `shortMessage` plus the relay's
+    // `details` is the part a reader can act on.
+    const short = error.shortMessage ?? error.message;
+    const details = (error as { details?: string }).details?.trim();
+    return { name: "Error", message: details && !short.includes(details) ? `${short} ${details}` : short };
   }
   const message = error instanceof Error ? error.message : String(error);
   return { name: "Error", message: withCause(message, error) };

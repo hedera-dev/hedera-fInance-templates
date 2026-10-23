@@ -2,7 +2,7 @@
 // issuer transaction is signed with. Private keys never leave this module.
 import { HASHIO_TESTNET_RPC_URL } from "./constants";
 import { parseOperatorKey } from "./operatorKey";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, http } from "viem";
 import type { Account } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import * as chains from "viem/chains";
@@ -67,4 +67,43 @@ export function getPublicClient() {
     sharedPublicClient = createPublicClient({ chain: chains.hederaTestnet, transport: http(HASHIO_TESTNET_RPC_URL) });
   }
   return sharedPublicClient;
+}
+
+/**
+ * Relay trouble, as opposed to an answer.
+ *
+ * A revert is an answer — the contract said no, and asking again says no again. These are the
+ * public relay failing to ask at all: `Service Unavailable` while simulating, a rate limit, a
+ * gateway error. They arrive as HTTP 400s carrying a `-32000` body, so the status alone cannot
+ * tell them apart from a refusal.
+ */
+const TRANSIENT_RELAY =
+  /service unavailable|timeout|timed out|too many requests|bad gateway|50[234]\b|ECONNRESET|ETIMEDOUT|fetch failed/i;
+
+export function isTransientRelayError(error: unknown): boolean {
+  if (error instanceof BaseError && error.walk(e => e instanceof ContractFunctionRevertedError)) return false;
+  const text = [
+    error instanceof Error ? error.message : String(error),
+    (error as { details?: string })?.details ?? "",
+  ].join(" ");
+  return TRANSIENT_RELAY.test(text);
+}
+
+/**
+ * Runs a read-only call again when the relay — not the contract — is the thing that failed.
+ * Only ever wrapped around simulations and reads: re-sending a transaction is not a retry.
+ */
+export async function retryTransient<T>(run: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || !isTransientRelayError(error)) throw error;
+      console.warn(`[ats] relay unavailable, retrying (${attempt}/${attempts - 1})`);
+      await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
 }

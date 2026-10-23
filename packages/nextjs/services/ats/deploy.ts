@@ -1,7 +1,7 @@
 // Server-only: orchestrates issuing a new bond through the ATS factory, emitting one event per
 // step so the caller (the streaming API route) can report real progress as it happens.
 import { factoryAbi, resolverAbi } from "./abi";
-import { requireOperator } from "./clients";
+import { requireOperator, retryTransient } from "./clients";
 import {
   ATS_FACTORY_CONTRACT_ID,
   ATS_RESOLVER_CONTRACT_ID,
@@ -99,14 +99,16 @@ export async function runIssueBond(input: IssueBondInput, emit: (event: IssueEve
 
     let predictedAddress: Address;
     try {
-      const sim = await operator.publicClient.simulateContract({
-        address: factoryAddress,
-        abi: factoryAbi,
-        functionName: "deployBond",
-        args: [bondData, regulation],
-        account: operator.account,
-        gas: GAS_LIMIT_DEPLOY_BOND,
-      });
+      const sim = await retryTransient(() =>
+        operator.publicClient.simulateContract({
+          address: factoryAddress,
+          abi: factoryAbi,
+          functionName: "deployBond",
+          args: [bondData, regulation],
+          account: operator.account,
+          gas: GAS_LIMIT_DEPLOY_BOND,
+        }),
+      );
       predictedAddress = sim.result;
     } catch (error) {
       const decoded = decodeAtsError(error);
